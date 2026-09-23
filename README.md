@@ -85,13 +85,22 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 
 ## Quick start
 
+### Requirements
+
+- **Node.js 22+** (build + `node --test`)
+- A **Chromium-based browser** (Chrome/Edge/Brave/Opera/Vivaldi) or **Firefox**
+- An **MCP client** (Claude Code, Claude Desktop, or any client supporting stdio MCP servers)
+
 ### 1. Build the server
 
 ```bash
-cd server
+git clone <your-repo-url> fastmcp-browser
+cd fastmcp-browser/server
 npm install
-npm run dev        # build + run stdio MCP server
+npm run build      # outputs dist/src/index.js
 ```
+
+(`npm run dev` builds and starts the stdio server immediately, useful for a smoke test.)
 
 ### 2. Load the extension
 
@@ -111,14 +120,16 @@ The extension auto-connects to `ws://127.0.0.1:9229` and keeps a stable per-prof
 
 ### 3. Register the MCP server in your client
 
-`.mcp.json` / `.openclaude.json`:
+**Option A, MCP Registry (once published):** install the server named `fastmcp-browser` through your client's MCP Registry command; no clone or build needed. Until the registry entry is live, use Option B.
+
+**Option B, manual config** (`.mcp.json` / `.openclaude.json`), pointing at your local clone:
 
 ```json
 {
   "mcpServers": {
     "fastmcp-browser": {
       "command": "node",
-      "args": ["D:/All_project/All_Test_On_Here/browseAIandExtension/server/dist/src/index.js"],
+      "args": ["/path/to/fastmcp-browser/server/dist/src/index.js"],
       "env": { "FASTMCP_PORT": "9229" }
     }
   }
@@ -141,6 +152,16 @@ Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + e
 | Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` |
 | Upload | `browser_upload` → `UNSUPPORTED_CAPABILITY` (honest, by design) |
 
+### Example session
+
+```text
+browser_open     { url: "https://example.com" }   → new tab joins the Automation group
+browser_snapshot { }                              → semantic element list with refs
+browser_fill     { ref: "r12", value: "hello" }   → set input value + fire change events
+browser_click    { ref: "r45", revision: 3 }      → click; revision rejects stale refs
+browser_status   { }                              → session, group, and tab state
+```
+
 ### Multi-profile workflow
 
 ```text
@@ -160,6 +181,22 @@ cd extension && npm test   # 39 session/router/bridge tests
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
 
+## Troubleshooting
+
+- **Extension shows "not connected"** — the MCP server must be running first (it hosts the WebSocket bridge on `127.0.0.1:9229`). Start the server, the extension retries every 1.5 seconds automatically.
+- **Port 9229 already in use** — the extension side is fixed to port 9229, so free that port (stop the other process) rather than changing only `FASTMCP_PORT`.
+- **Commands time out right after loading the extension** — reload the extension after rebuilding (`node build.mjs`), the service worker may still run the old bundle.
+- **`load unpacked` fails** — select the folder that contains `manifest.json` (the `chromium` or `firefox` folder itself).
+- **Multiple profiles** — install/enable the extension in each profile you want to control, then use `browser_instances` to confirm both are connected.
+- **Token rejected** — `FASTMCP_TOKEN` on the server and the extension must match (`fastmcpToken` in manifest or `fastmcpToken` storage key).
+
+## Contributing
+
+1. Fork and create a feature branch.
+2. Keep both suites green: `npm test` in `server/` and `extension/`.
+3. Follow the existing TDD workflow: failing test first, then the minimal change.
+4. Open a PR describing the behavior change and its test.
+
 ## Project structure
 
 ```text
@@ -176,7 +213,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
     ├── src/        # background SW, session, router, content engine
     ├── assets/     # icon.png + icons/ 16-32-48-128
     ├── tests/      # 39 tests
-    └── dist/       # chromium/ + firefox/  ← load these unpacked
+    └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
 ## Limitations (on purpose)
