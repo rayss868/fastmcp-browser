@@ -21,11 +21,17 @@ jobs:
       - name: Package zips
         run: |
           cd extension/dist
-          zip -r fastmcp-browser-chromium.zip chromium
-          zip -r fastmcp-browser-firefox.zip firefox
+          zip -r fastmcp-browser-extension-chromium.zip chromium
+          zip -r fastmcp-browser-extension-firefox.zip firefox
       - name: Create GitHub Release with zips
         uses: softprops/action-gh-release@v2
         with:
+          body: |
+            WebExtension builds of FastMCP Browser (28 MCP tools, including `browser_upload` and `browser_network`).
+
+            Unzip the archive, then load it unpacked:
+            - **Chromium** (`fastmcp-browser-extension-chromium.zip`) → `chrome://extensions` → Load unpacked → the `chromium` folder
+            - **Firefox** (`fastmcp-browser-extension-firefox.zip`) → `about:debugging` → Load Temporary Add-on → `firefox/manifest.json`
           files: |
-            extension/dist/fastmcp-browser-chromium.zip
-            extension/dist/fastmcp-browser-firefox.zip
+            extension/dist/fastmcp-browser-extension-chromium.zip
+            extension/dist/fastmcp-browser-extension-firefox.zip

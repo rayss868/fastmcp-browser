@@ -108,7 +108,7 @@ npm run build      # outputs dist/src/index.js
 
 ### 2. Load the extension
 
-**No build needed:** grab `fastmcp-browser-chromium.zip` or `fastmcp-browser-firefox.zip` from the [GitHub Releases](../../releases) page (published automatically on every `v*` tag), unzip, and load the extracted folder (see steps below).
+**No build needed:** grab `fastmcp-browser-extension-chromium.zip` or `fastmcp-browser-extension-firefox.zip` from the [GitHub Releases](../../releases) page (published automatically on every `v*` tag), unzip, and load the extracted folder (see steps below).
 
 Or build it yourself:
 
