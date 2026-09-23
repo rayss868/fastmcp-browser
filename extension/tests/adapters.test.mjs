@@ -47,6 +47,7 @@ test('chromium adapter normalizes promise WebExtension APIs', async () => {
 
   assert.deepEqual(await adapter.tabs.query(), [{ id: 3 }]);
   assert.deepEqual(await adapter.tabs.create('https://example.com'), { id: 4, url: 'https://example.com' });
+  assert.deepEqual(await adapter.tabs.create('https://background.test', { active: false }), { id: 4, url: 'https://background.test', active: false });
   await adapter.tabs.remove(4);
   await adapter.tabs.update(3, { active: true });
   await adapter.tabs.get(3);
@@ -61,7 +62,11 @@ test('chromium adapter normalizes promise WebExtension APIs', async () => {
   await adapter.storage.session.get(null);
   await adapter.downloads.download({ url: 'https://example.com/file' });
 
-  assert.equal(calls.length, 15);
+  assert.equal(calls.length, 16);
+  assert.deepEqual(calls.filter(([name]) => name === 'tabs.create').map(([, details]) => details), [
+    { url: 'https://example.com' },
+    { active: false, url: 'https://background.test' }
+  ]);
   assert.deepEqual(adapter.capabilities(), {
     tabs: true, dom: true, snapshot: true, inventory: true,
     screenshot: 'bitmap', storage: true, cookies: true, upload: true,

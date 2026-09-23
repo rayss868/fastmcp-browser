@@ -151,7 +151,7 @@ async function callPage(tabId, method, params) {
 
 async function tabs(method, params) {
   if (method === 'browser_tabs') return api.tabs.query({});
-  if (method === 'browser_open') return api.tabs.create({ url: String(params.url) });
+  if (method === 'browser_open') return api.tabs.create({ url: String(params.url), active: false });
   if (method === 'browser_close') return api.tabs.remove(Number(params.tabId));
   if (method === 'browser_focus') return api.tabs.update(Number(params.tabId), { active: true });
   throw Object.assign(new Error(`Unsupported tab method: ${method}`), { code: 'UNSUPPORTED_CAPABILITY' });

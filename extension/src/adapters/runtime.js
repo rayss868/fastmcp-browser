@@ -30,7 +30,7 @@ function createAdapter(api, browser) {
     browser,
     tabs: {
       query: query => invoke(api.tabs.query.bind(api.tabs), query ?? {}),
-      create: url => invoke(api.tabs.create.bind(api.tabs), { url }),
+      create: (url, createProperties = {}) => invoke(api.tabs.create.bind(api.tabs), { ...createProperties, url }),
       remove: tabId => invoke(api.tabs.remove.bind(api.tabs), tabId),
       update: (tabId, updateInfo) => invoke(api.tabs.update.bind(api.tabs), tabId, updateInfo),
       get: tabId => invoke(api.tabs.get.bind(api.tabs), tabId),
