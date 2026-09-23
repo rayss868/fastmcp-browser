@@ -20,7 +20,7 @@ jobs:
         run: npm test
         working-directory: server
       - name: Extension tests
-        run: npm test
+        run: node --test tests/*.test.mjs
         working-directory: extension
       - name: Build extension (chromium + firefox)
         run: node build.mjs
