@@ -16,9 +16,6 @@ jobs:
       - name: Install server deps
         run: npm ci
         working-directory: server
-      - name: Install extension deps
-        run: npm install
-        working-directory: extension
       - name: Server tests (build + unit/workflow/security)
         run: npm test
         working-directory: server
