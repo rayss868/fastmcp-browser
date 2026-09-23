@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCommandRouter } from '../src/router.js';
 
+test('router requires an authorized tab for network observation', async () => {
+  const router = createCommandRouter({ execute: async () => ({ ok: true }) });
+
+  await assert.rejects(
+    router.handle('browser_network', { tabId: 99 }),
+    error => error.code === 'PERMISSION_DENIED'
+  );
+});
+
 test('router rejects unknown methods without calling the executor', async () => {
   const router = createCommandRouter({ execute: async () => ({ OK: true }) });
 

@@ -2,6 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { boundingBox, createReferenceStore } from '../src/content/refs.js';
 import { decodeFileEntries } from '../src/content/files.js';
+import { summarizeResources } from '../src/content/network.js';
+
+test('summarizeResources maps resource timing entries compactly', () => {
+  const summary = summarizeResources([
+    { name: 'https://app.test/app.js', initiatorType: 'script', duration: 12.4, transferSize: 512, responseStatus: 200 },
+    { name: 'https://app.test/logo.png', initiatorType: 'img', duration: 5, transferSize: 0 }
+  ]);
+
+  assert.deepEqual(summary, [
+    { url: 'https://app.test/app.js', type: 'script', durationMs: 12, size: 512, status: 200 },
+    { url: 'https://app.test/logo.png', type: 'img', durationMs: 5, size: 0, status: 0 }
+  ]);
+});
+
+test('summarizeResources keeps only the newest entries when limited', () => {
+  const summary = summarizeResources([
+    { name: 'https://app.test/1.js', initiatorType: 'script', duration: 1, transferSize: 10, responseStatus: 200 },
+    { name: 'https://app.test/2.js', initiatorType: 'script', duration: 2, transferSize: 20, responseStatus: 200 },
+    { name: 'https://app.test/3.js', initiatorType: 'script', duration: 3, transferSize: 30, responseStatus: 200 }
+  ], 2);
+
+  assert.equal(summary.length, 2);
+  assert.equal(summary[0].url, 'https://app.test/2.js');
+  assert.equal(summary[1].url, 'https://app.test/3.js');
+});
 
 test('decodeFileEntries turns base64 payloads into File objects', async () => {
   const [file] = decodeFileEntries([

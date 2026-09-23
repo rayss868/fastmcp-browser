@@ -7,7 +7,17 @@ import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/too
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 27);
+  assert.equal(TOOL_NAMES.length, 28);
+});
+
+test('browser_network is registered with a described input schema', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const network = byName.get('browser_network');
+  assert.ok(network, 'browser_network missing from the registry');
+  assert.match(network.description, /resource|request/i);
+  const props = network.inputSchema.properties as Record<string, { description?: string }>;
+  assert.ok(props.tabId?.description, 'browser_network.tabId missing description');
+  assert.ok(props.limit?.description, 'browser_network.limit missing description');
 });
 
 test('every tool ships an informative description', () => {

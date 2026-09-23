@@ -34,6 +34,7 @@ const schemas = {
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
   browser_screenshot: z.object({ tabId }),
   browser_upload: z.object({ tabId, ref, revision, paths: z.array(z.string()).min(1).describe('Local file paths read on the MCP host and attached as upload files.') }),
+  browser_network: z.object({ tabId, limit: z.number().int().min(1).max(500).optional().describe('Maximum number of most recent resource requests to return.') }),
   browser_download: z.object({ tabId, url: z.string().url() }),
   browser_cookies: z.object({ tabId, action: z.enum(['get', 'set', 'remove']), cookie: z.record(z.unknown()).optional() }),
   browser_storage: z.object({ tabId, area: z.enum(['local', 'session']).default('local'), action: z.enum(['get', 'set', 'remove']), key: z.string().optional(), value: z.unknown().optional() }),

@@ -16,6 +16,7 @@ export function runPageCommand(engine, name, input = {}) {
   }
   if (name === 'browser_screenshot') return engine.screenshotTarget(input.ref, input.revision);
   if (name === 'browser_upload') return engine.upload(input.ref, input.revision, input.files);
+  if (name === 'browser_network') return engine.network(input);
   if (name === 'browser_scroll') return engine.scroll(input);
   if (name === 'browser_pointer_move') return engine.pointer({ ...input, type: 'pointermove' });
   if (name === 'browser_pointer_click') return engine.pointer({ ...input, type: 'pointerclick' });

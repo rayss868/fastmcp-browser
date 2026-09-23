@@ -53,7 +53,7 @@ export const TOOL_NAMES = [
   'browser_connect', 'browser_status', 'browser_tabs', 'browser_open', 'browser_close', 'browser_focus',
   'browser_snapshot', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
   'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_scroll',
-  'browser_wait', 'browser_screenshot', 'browser_upload', 'browser_download', 'browser_cookies',
+  'browser_wait', 'browser_screenshot', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
   'browser_storage', 'browser_evaluate', 'browser_instances', 'browser_use_instance', 'browser_disconnect'
 ] as const;
 
@@ -78,6 +78,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle.',
   browser_screenshot: 'Capture a PNG dataUrl of the visible viewport of the given tab.',
   browser_upload: 'Read local files from disk (paths) and attach them to the file input identified by ref; files are read on the MCP host and set via DataTransfer, no OS dialog.',
+  browser_network: 'List resource requests (scripts, stylesheets, XHR/fetch, images, fonts) the given tab already loaded, read from the Resource Timing API: url, initiator type, duration, transfer size, and HTTP status. Observation only; requests cannot be intercepted or modified.',
   browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
   browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
@@ -121,6 +122,7 @@ const schemas: Record<string, JsonSchema> = {
   browser_wait: object({ tabId: TAB_ID, milliseconds: { type: 'integer', minimum: 0, maximum: 60000, description: 'Pause duration in milliseconds (0-60000).' } }, ['milliseconds']),
   browser_screenshot: object({ tabId: TAB_ID }),
   browser_upload: object({ tabId: TAB_ID, ref: REF, paths: { type: 'array', items: { type: 'string' }, description: 'Local file paths to upload into the file input.' } }, ['paths']),
+  browser_network: object({ tabId: TAB_ID, limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Maximum number of most recent resource requests to return.' } }),
   browser_download: object({ tabId: TAB_ID, url: { type: 'string', format: 'uri', description: 'Download URL to save through the browser.' } }, ['url']),
   browser_cookies: object({ tabId: TAB_ID, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Cookie operation to perform.' }, cookie: { type: 'object', description: 'Cookie details for set; name for remove.' } }, ['action']),
   browser_storage: object({ tabId: TAB_ID, area: { type: 'string', enum: ['local', 'session'], description: 'Storage area (defaults to local).' }, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Storage operation to perform.' }, key: { type: 'string', description: 'Storage key for set/remove or single-key get.' }, value: { description: 'Value to store for set.' } }, ['action']),

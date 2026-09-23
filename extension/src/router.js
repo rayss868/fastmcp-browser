@@ -11,7 +11,8 @@ const PAGE_METHODS = new Set([
   'browser_pointer_move',
   'browser_pointer_click',
   'browser_pointer_drag',
-  'browser_evaluate'
+  'browser_evaluate',
+  'browser_network'
 ]);
 
 const TAB_METHODS = new Set([

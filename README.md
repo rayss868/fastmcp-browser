@@ -8,9 +8,9 @@
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
 
-- **27 MCP tools**, full schema footprint ≈ **3.1k tokens**
+- **28 MCP tools**, full schema footprint ≈ **3.3k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 23/23, extension 42/42, build green for Chromium + Firefox
+- **Tests**: server 24/24, extension 46/46, build green for Chromium + Firefox
 
 ---
 
@@ -41,7 +41,7 @@
 2. **No CDP / no `chrome.debugger`** — nothing to attach, nothing for anti-bot layers to see as an automation driver. (Honest caveat: it is still automation on the page — it reduces fingerprints, it is not invisibility.)
 3. **Multi-profile as a first class citizen** — two profiles with the same extension connected at once; `browser_instances` lists them (stable `instanceId`, browser brand, active-tab hint), `browser_use_instance` reroutes the bridge. Playwright MCP needs one process per profile.
 4. **Persistent session model** — tabs join an `Automation` tab group; the session survives across AI runs and keeps `tabIds` reconciled.
-5. **Tiny context cost** — the *entire* 27-tool schema is ~3.1k tokens; snapshots return compact `ref` handles instead of raw DOM.
+5. **Tiny context cost** — the *entire* 28-tool schema is ~3.3k tokens; snapshots return compact `ref` handles instead of raw DOM.
 6. **Loopback-only bridge** — `127.0.0.1:9229`, token-authenticated. No external endpoints, works behind middleware/AI gateways with no proxy config (a known Playwright MCP HTTP/SSE pain point).
 
 ## Benchmark
@@ -64,7 +64,7 @@ Context vs the wider MCP browser landscape:
 | Metric | FastMCP Browser | @playwright/mcp | Notes / source |
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
-| Schema footprint (all tools) | **~3.1k tokens / 27 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
+| Schema footprint (all tools) | **~3.3k tokens / 28 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
 | Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 (see [docs/research-browser-automation.md](docs/research-browser-automation.md)) |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
@@ -79,7 +79,7 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 │  Claude, etc │                 │  tools → bridge  │   token handshake        │  background SW + content  │
 └──────────────┘                 └──────────────────┘   multi-instance         │  engine (page MAIN world) │
                                     │  bridge.ts        routing + promote      └───────────────────────────┘
-                                    │  tools.ts (27)                                               │
+                                    │  tools.ts (28)                                               │
                                     └─ index.ts (MCP SDK, zod)                                     ▼
                                                                                     chrome.* APIs, NO CDP
 ```
@@ -144,7 +144,7 @@ The extension auto-connects to `ws://127.0.0.1:9229` and keeps a stable per-prof
 
 Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + extension must match).
 
-## Tool reference (27)
+## Tool reference (28)
 
 | Group | Tools |
 |---|---|
@@ -157,6 +157,7 @@ Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + e
 | Timing | `browser_wait` |
 | Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` |
 | Upload | `browser_upload` |
+| Network observe | `browser_network` |
 
 ### Example session
 
@@ -166,6 +167,7 @@ browser_snapshot { }                              → semantic element list with
 browser_fill     { ref: "r12", value: "hello" }   → set input value + fire change events
 browser_click    { ref: "r45", revision: 3 }      → click; revision rejects stale refs
 browser_upload   { ref: "r50", paths: ["/tmp/a.pdf"] } → file read on host, attached to input
+browser_network  { limit: 50 }                     → resources the tab already loaded (Resource Timing)
 browser_status   { }                              → session, group, and tab state
 ```
 
@@ -182,8 +184,8 @@ The first-connected profile is active by default; if the active one disconnects,
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 23 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 42 session/router/bridge tests
+cd server   && npm test    # build + 24 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 46 session/router/bridge tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -213,20 +215,20 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   ├── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 │   └── superpowers/                    # design spec, plan, baseline benchmark
 ├── server/
-│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (27 registry)
-│   ├── tests/      # 23 tests
+│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (28 registry)
+│   ├── tests/      # 24 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 42 tests
+    ├── tests/      # 46 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
 ## Limitations (on purpose)
 
 - **Opening the OS file-chooser dialog** is impossible for extensions; `browser_upload` works by setting files programmatically instead (max 25MB per file).
-- **No network interception/capture** beyond page-level observe, no browser debugger protocol.
+- **No network interception/capture** — `browser_network` observes resources the page already loaded (Resource Timing: url, type, duration, size, status), but requests cannot be seen live or modified, and there is no browser debugger protocol.
 - **No headless / browser launching** — it automates browsers that are already running.
 - Screenshot is bitmap (viewport capture), not full-page vector output.
 

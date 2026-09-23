@@ -43,6 +43,12 @@ test('page router forwards upload payload to the engine', () => {
   assert.deepEqual(engine.uploadArgs, ['e7', 3, files]);
 });
 
+test('page router forwards network observation to the engine', () => {
+  const engine = { network: input => ({ seen: input }) };
+
+  assert.deepEqual(runPageCommand(engine, 'browser_network', { limit: 5 }), { seen: { limit: 5 } });
+});
+
 test('page router validates wait duration and unknown methods', () => {
   const engine = { wait: () => undefined };
   assert.throws(() => runPageCommand(engine, 'browser_wait', { milliseconds: -1 }), error => error.code === 'INVALID_ARGUMENT');

@@ -3,6 +3,7 @@ import { createDomSemantics } from './semantics.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
 import { decodeFileEntries } from './files.js';
+import { summarizeResources } from './network.js';
 
 const refs = createReferenceStore();
 const semantics = createDomSemantics(document, window);
@@ -69,6 +70,11 @@ function upload(ref, revision, files) {
   return { changed: true, count: element.files.length, revision: refs.getRevision() };
 }
 
-window.__fastMcp = { snapshot, inventory, resolve, actionClick, fill, press, select, wait, screenshotTarget, scroll, pointer, upload, state };
+function network(input = {}) {
+  const entries = typeof performance.getEntriesByType === 'function' ? performance.getEntriesByType('resource') : [];
+  return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
+}
+
+window.__fastMcp = { snapshot, inventory, resolve, actionClick, fill, press, select, wait, screenshotTarget, scroll, pointer, upload, network, state };
 state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
 state.observer.observe(document.documentElement, { subtree: true, childList: true });

@@ -126,6 +126,7 @@ async function callPage(tabId, method, params) {
       }
       if (name === 'browser_screenshot') return engine.screenshotTarget(input.ref, input.revision);
       if (name === 'browser_upload') return engine.upload(input.ref, input.revision, input.files);
+      if (name === 'browser_network') return engine.network(input);
       if (name === 'browser_scroll') return engine.scroll(input);
       if (name === 'browser_pointer_move') return engine.pointer({ ...input, type: 'pointermove' });
       if (name === 'browser_pointer_click') return engine.pointer({ ...input, type: 'pointerclick' });
@@ -225,7 +226,7 @@ async function download(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload'];
+  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload', 'browser_network'];
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
   if (method === 'browser_cookies') return cookies(params);
