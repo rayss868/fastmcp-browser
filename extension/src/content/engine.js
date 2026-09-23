@@ -2,6 +2,7 @@ import { createReferenceStore, boundingBox } from './refs.js';
 import { createDomSemantics } from './semantics.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
+import { decodeFileEntries } from './files.js';
 
 const refs = createReferenceStore();
 const semantics = createDomSemantics(document, window);
@@ -53,6 +54,21 @@ function pointer(input) {
   throw Object.assign(new Error(`Unsupported pointer type: ${input.type}`), { code: 'INVALID_ARGUMENT' });
 }
 
-window.__fastMcp = { snapshot, inventory, resolve, actionClick, fill, press, select, wait, screenshotTarget, scroll, pointer, state };
+function upload(ref, revision, files) {
+  const element = ref
+    ? resolve(ref, revision ?? refs.getRevision())
+    : document.querySelector('input[type="file"]');
+  if (!(element instanceof HTMLInputElement) || element.type !== 'file') {
+    throw Object.assign(new Error('Element is not a file input'), { code: 'ELEMENT_NOT_INTERACTIVE' });
+  }
+  const transfer = new DataTransfer();
+  for (const file of decodeFileEntries(files)) transfer.items.add(file);
+  element.files = transfer.files;
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  return { changed: true, count: element.files.length, revision: refs.getRevision() };
+}
+
+window.__fastMcp = { snapshot, inventory, resolve, actionClick, fill, press, select, wait, screenshotTarget, scroll, pointer, upload, state };
 state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
 state.observer.observe(document.documentElement, { subtree: true, childList: true });

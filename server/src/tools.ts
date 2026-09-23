@@ -1,4 +1,50 @@
 import type { BrowserBridge } from './bridge.js';
+import { readFile, stat } from 'node:fs/promises';
+import { basename, extname } from 'node:path';
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.html': 'text/html',
+  '.xml': 'text/xml',
+  '.md': 'text/markdown',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.zip': 'application/zip',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+};
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+async function readUploadFiles(paths: string[]): Promise<Array<{ name: string; type: string; data: string }>> {
+  const files = [];
+  for (const path of paths) {
+    let info;
+    try {
+      info = await stat(path);
+    } catch {
+      throw Object.assign(new Error(`Upload file not found: ${path}`), { code: 'INVALID_ARGUMENT', retryable: false });
+    }
+    if (!info.isFile()) {
+      throw Object.assign(new Error(`Upload path is not a file: ${path}`), { code: 'INVALID_ARGUMENT', retryable: false });
+    }
+    if (info.size > MAX_UPLOAD_BYTES) {
+      throw Object.assign(new Error(`Upload exceeds the 25MB limit: ${path}`), { code: 'INVALID_ARGUMENT', retryable: false });
+    }
+    files.push({
+      name: basename(path),
+      type: MIME_BY_EXT[extname(path).toLowerCase()] ?? 'application/octet-stream',
+      data: (await readFile(path)).toString('base64')
+    });
+  }
+  return files;
+}
 
 type JsonSchema = Record<string, unknown>;
 type Tool = { name: string; description: string; inputSchema: JsonSchema };
@@ -31,7 +77,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle.',
   browser_screenshot: 'Capture a PNG dataUrl of the visible viewport of the given tab.',
-  browser_upload: 'Upload local files into the file input identified by ref; unsupported by the extension-only MVP.',
+  browser_upload: 'Read local files from disk (paths) and attach them to the file input identified by ref; files are read on the MCP host and set via DataTransfer, no OS dialog.',
   browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
   browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
@@ -96,5 +142,9 @@ export async function callBrowserTool(bridge: BrowserBridge, name: string, param
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
   if (name === 'browser_instances') return bridge.instances();
   if (name === 'browser_use_instance') return bridge.useInstance(String(params.id ?? ''));
+  if (name === 'browser_upload') {
+    const { paths, ...rest } = params;
+    return bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) });
+  }
   return bridge.request(name, params);
 }

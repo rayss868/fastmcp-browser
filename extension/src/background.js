@@ -78,7 +78,7 @@ const router = createCommandRouter({
     if (method === 'browser_evaluate') return evaluateInPage(params);
     return attachSession(method, await command(method, params));
   },
-  capabilities: { upload: false },
+  capabilities: { upload: true },
   resolveTabId: async () => (await session.info()).tabIds[0]
 });
 
@@ -125,6 +125,7 @@ async function callPage(tabId, method, params) {
         return engine.wait(milliseconds);
       }
       if (name === 'browser_screenshot') return engine.screenshotTarget(input.ref, input.revision);
+      if (name === 'browser_upload') return engine.upload(input.ref, input.revision, input.files);
       if (name === 'browser_scroll') return engine.scroll(input);
       if (name === 'browser_pointer_move') return engine.pointer({ ...input, type: 'pointermove' });
       if (name === 'browser_pointer_click') return engine.pointer({ ...input, type: 'pointerclick' });
@@ -224,13 +225,12 @@ async function download(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate'];
+  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload'];
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
   if (method === 'browser_cookies') return cookies(params);
   if (method === 'browser_storage') return storage(params);
   if (method === 'browser_download') return download(params);
-  if (method === 'browser_upload') throw Object.assign(new Error('Local file upload requires an OS file chooser and is unsupported by the extension-only MVP.'), { code: 'UNSUPPORTED_CAPABILITY', retryable: false });
   if (['browser_tabs', 'browser_open', 'browser_close', 'browser_focus'].includes(method)) return tabs(method, params);
   if (method === 'browser_status' || method === 'browser_connect') return { connected: true, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', storage: true, cookies: true, upload: false, download: true, evaluate: true, network_observe: 'partial', network_intercept: false, browser_debugger: false, os_pointer: false } };
   if (method === 'browser_disconnect') return { connected: false };
@@ -286,7 +286,7 @@ api.runtime.onMessage?.addListener(async message => {
         screenshot: 'bitmap',
         storage: true,
         cookies: true,
-        upload: false,
+        upload: true,
         download: true,
         evaluate: true,
         network_observe: 'partial',

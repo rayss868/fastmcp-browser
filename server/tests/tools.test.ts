@@ -1,4 +1,7 @@
 import test from 'node:test';
+import { writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/tools.js';
 
@@ -58,6 +61,49 @@ test('callBrowserTool rejects unknown tools', async () => {
     request: async () => undefined
   };
   await assert.rejects(callBrowserTool(bridge, 'browser_unknown', {}), /Unknown tool/);
+});
+
+test('callBrowserTool browser_upload reads local files into base64 payloads', async () => {
+  const tmp = join(tmpdir(), `fastmcp-upload-${Date.now()}.txt`);
+  await writeFile(tmp, 'hello upload');
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      return { accepted: true };
+    }
+  };
+
+  try {
+    await callBrowserTool(bridge as never, 'browser_upload', { tabId: 3, ref: 'e9', paths: [tmp] });
+  } finally {
+    await rm(tmp, { force: true });
+  }
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'browser_upload');
+  const files = calls[0].params.files as Array<{ name: string; type: string; data: string }>;
+  assert.ok(Array.isArray(files) && files.length === 1, 'browser_upload must forward a files payload');
+  assert.match(files[0].name, /\.txt$/);
+  assert.equal(files[0].type, 'text/plain');
+  assert.equal(Buffer.from(files[0].data, 'base64').toString('utf8'), 'hello upload');
+});
+
+test('callBrowserTool browser_upload rejects missing files without forwarding', async () => {
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async () => {
+      throw new Error('must not forward');
+    }
+  };
+
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_upload', { paths: [join(tmpdir(), 'fastmcp-definitely-missing.txt')] }),
+    (error: { code?: string }) => error.code === 'INVALID_ARGUMENT'
+  );
 });
 
 test('registry documents instance selection tools', () => {

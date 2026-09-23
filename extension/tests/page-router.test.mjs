@@ -29,6 +29,20 @@ test('page router dispatches DOM actions', async () => {
   assert.equal(calls.length, 5);
 });
 
+test('page router forwards upload payload to the engine', () => {
+  const files = [{ name: 'a.txt', type: 'text/plain', data: 'aGVsbG8=' }];
+  const engine = {
+    snapshot: () => 'snapshot',
+    upload: (...args) => { engine.uploadArgs = args; return { changed: true, count: 1 }; }
+  };
+
+  assert.deepEqual(
+    runPageCommand(engine, 'browser_upload', { ref: 'e7', revision: 3, files }),
+    { changed: true, count: 1 }
+  );
+  assert.deepEqual(engine.uploadArgs, ['e7', 3, files]);
+});
+
 test('page router validates wait duration and unknown methods', () => {
   const engine = { wait: () => undefined };
   assert.throws(() => runPageCommand(engine, 'browser_wait', { milliseconds: -1 }), error => error.code === 'INVALID_ARGUMENT');

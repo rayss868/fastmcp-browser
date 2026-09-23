@@ -33,7 +33,7 @@ const schemas = {
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
   browser_screenshot: z.object({ tabId }),
-  browser_upload: z.object({ tabId, ref, paths: z.array(z.string()).min(1) }),
+  browser_upload: z.object({ tabId, ref, revision, paths: z.array(z.string()).min(1).describe('Local file paths read on the MCP host and attached as upload files.') }),
   browser_download: z.object({ tabId, url: z.string().url() }),
   browser_cookies: z.object({ tabId, action: z.enum(['get', 'set', 'remove']), cookie: z.record(z.unknown()).optional() }),
   browser_storage: z.object({ tabId, area: z.enum(['local', 'session']).default('local'), action: z.enum(['get', 'set', 'remove']), key: z.string().optional(), value: z.unknown().optional() }),

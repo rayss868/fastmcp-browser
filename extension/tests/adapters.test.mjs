@@ -64,7 +64,7 @@ test('chromium adapter normalizes promise WebExtension APIs', async () => {
   assert.equal(calls.length, 15);
   assert.deepEqual(adapter.capabilities(), {
     tabs: true, dom: true, snapshot: true, inventory: true,
-    screenshot: 'bitmap', storage: true, cookies: true, upload: false,
+    screenshot: 'bitmap', storage: true, cookies: true, upload: true,
     download: true, evaluate: true, network_observe: 'partial',
     network_intercept: false, browser_debugger: false, os_pointer: false,
     tab_groups: 'logical'

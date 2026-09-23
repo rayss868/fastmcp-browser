@@ -8,7 +8,7 @@ const baseCapabilities = {
   screenshot: 'bitmap',
   storage: true,
   cookies: true,
-  upload: false,
+  upload: true,
   download: true,
   evaluate: true,
   network_observe: 'partial',

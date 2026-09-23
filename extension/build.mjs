@@ -16,6 +16,7 @@ async function copyContentEngine(out) {
     'content/semantics.js',
     'content/snapshot.js',
     'content/pointer.js',
+    'content/files.js',
     'content/engine.js'
   ];
   const chunks = [];

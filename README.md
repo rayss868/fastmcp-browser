@@ -10,7 +10,7 @@
 
 - **27 MCP tools**, full schema footprint ≈ **3.1k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 21/21, extension 39/39, build green for Chromium + Firefox
+- **Tests**: server 23/23, extension 42/42, build green for Chromium + Firefox
 
 ---
 
@@ -27,7 +27,7 @@
 | Session tab group | ✅ auto group `Automation`, survives multi-run | ❌ | ❌ | ❌ |
 | Snapshot model | semantic a11y refs (small) | accessibility snapshot (~2–5 KB per snapshot) | a11y + network + traces | DOM/text |
 | Install weight | extension + ~0 deps (`ws`, `zod`, MCP SDK) | downloads Playwright browser binaries | downloads Chrome + CDP tooling | extension + native pieces |
-| Upload files | ❌ explicit `UNSUPPORTED_CAPABILITY` (no OS file chooser control) | ✅ | ✅ | ✅ |
+| Upload files | ✅ local paths → `DataTransfer` set on `input[type=file]`, no OS dialog (max 25MB/file) | ✅ | ✅ | ✅ |
 
 ### Honest strengths of Playwright MCP (and where it still wins)
 
@@ -156,7 +156,7 @@ Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + e
 | Pointer & scroll | `browser_pointer_move`, `browser_pointer_click`, `browser_pointer_drag`, `browser_scroll` |
 | Timing | `browser_wait` |
 | Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` |
-| Upload | `browser_upload` → `UNSUPPORTED_CAPABILITY` (honest, by design) |
+| Upload | `browser_upload` |
 
 ### Example session
 
@@ -165,6 +165,7 @@ browser_open     { url: "https://example.com" }   → new tab joins the Automati
 browser_snapshot { }                              → semantic element list with refs
 browser_fill     { ref: "r12", value: "hello" }   → set input value + fire change events
 browser_click    { ref: "r45", revision: 3 }      → click; revision rejects stale refs
+browser_upload   { ref: "r50", paths: ["/tmp/a.pdf"] } → file read on host, attached to input
 browser_status   { }                              → session, group, and tab state
 ```
 
@@ -181,8 +182,8 @@ The first-connected profile is active by default; if the active one disconnects,
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 21 unit/workflow/security tests
-cd extension && npm test   # 39 session/router/bridge tests
+cd server   && npm test    # build + 23 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 42 session/router/bridge tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -213,18 +214,18 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   └── superpowers/                    # design spec, plan, baseline benchmark
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (27 registry)
-│   ├── tests/      # 21 tests
+│   ├── tests/      # 23 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
-    ├── src/        # background SW, session, router, content engine
+    ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 39 tests
+    ├── tests/      # 42 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
 ## Limitations (on purpose)
 
-- **File upload** unavailable — extensions cannot drive the OS file chooser.
+- **Opening the OS file-chooser dialog** is impossible for extensions; `browser_upload` works by setting files programmatically instead (max 25MB per file).
 - **No network interception/capture** beyond page-level observe, no browser debugger protocol.
 - **No headless / browser launching** — it automates browsers that are already running.
 - Screenshot is bitmap (viewport capture), not full-page vector output.
