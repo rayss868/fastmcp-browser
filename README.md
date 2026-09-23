@@ -1,5 +1,9 @@
 # FastMCP Browser
 
+[![CI](https://github.com/rayss868/fastmcp-browser/actions/workflows/ci.yml/badge.svg)](https://github.com/rayss868/fastmcp-browser/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/rayss868/fastmcp-browser)](https://github.com/rayss868/fastmcp-browser/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 ![FastMCP Browser banner](docs/banner.png)
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
@@ -122,7 +126,9 @@ The extension auto-connects to `ws://127.0.0.1:9229` and keeps a stable per-prof
 
 **Option A, MCP Registry (once published):** install the server named `fastmcp-browser` through your client's MCP Registry command; no clone or build needed. Until the registry entry is live, use Option B.
 
-**Option B, manual config** (`.mcp.json` / `.openclaude.json`), pointing at your local clone:
+**Option B, download the extension zip** from [GitHub Releases](../../releases) (no build needed), unzip, and load it unpacked (step 2 above).
+
+**Option C, manual config** (`.mcp.json` / `.openclaude.json`), pointing at your local clone:
 
 ```json
 {
