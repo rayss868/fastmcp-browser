@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build extension
+        run: node build.mjs
+        working-directory: extension
+      - name: Package zips
+        run: |
+          cd extension/dist
+          zip -r fastmcp-browser-chromium.zip chromium
+          zip -r fastmcp-browser-firefox.zip firefox
+      - name: Create GitHub Release with zips
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            extension/dist/fastmcp-browser-chromium.zip
+            extension/dist/fastmcp-browser-firefox.zip

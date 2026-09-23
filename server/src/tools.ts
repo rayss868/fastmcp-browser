@@ -1,0 +1,100 @@
+import type { BrowserBridge } from './bridge.js';
+
+type JsonSchema = Record<string, unknown>;
+type Tool = { name: string; description: string; inputSchema: JsonSchema };
+
+export const TOOL_NAMES = [
+  'browser_connect', 'browser_status', 'browser_tabs', 'browser_open', 'browser_close', 'browser_focus',
+  'browser_snapshot', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
+  'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_scroll',
+  'browser_wait', 'browser_screenshot', 'browser_upload', 'browser_download', 'browser_cookies',
+  'browser_storage', 'browser_evaluate', 'browser_instances', 'browser_use_instance', 'browser_disconnect'
+] as const;
+
+export const TOOL_DOCS: Record<string, string> = {
+  browser_connect: 'Open the WebSocket bridge to the extension and verify the handshake; returns bridge connectivity and capabilities.',
+  browser_status: 'Report bridge status, authorized tab count, active session group, browser identity, and supported capabilities.',
+  browser_tabs: 'List browser tabs as compact entries (id, title, url, active, groupId, windowId); also authorizes those tabs for this session. Pass full:true for raw tab data.',
+  browser_open: 'Open a URL in a new tab, join the automation session group, and return the created tab for later actions.',
+  browser_close: 'Close the given tab and revoke its session authorization so it cannot be targeted again.',
+  browser_focus: 'Activate the given tab so subsequent page actions target it visibly.',
+  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets.',
+  browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter.',
+  browser_click: 'Click the element identified by ref from the latest snapshot; pass revision to reject stale refs.',
+  browser_pointer_move: 'Move the pointer to page coordinates in the active tab for hover-driven UI.',
+  browser_pointer_click: 'Click at page coordinates using the virtual pointer in the given tab.',
+  browser_pointer_drag: 'Drag from one page coordinate to another in the given tab using pointer events.',
+  browser_fill: 'Replace the value of the input identified by ref and fire change events.',
+  browser_type: 'Set text into the field identified by ref, emitting input events like real typing.',
+  browser_press: 'Dispatch a keyboard key press on the page, optionally targeting the element ref first.',
+  browser_select: 'Choose an option value on the select element identified by ref.',
+  browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
+  browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle.',
+  browser_screenshot: 'Capture a PNG dataUrl of the visible viewport of the given tab.',
+  browser_upload: 'Upload local files into the file input identified by ref; unsupported by the extension-only MVP.',
+  browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
+  browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
+  browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
+  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result.',
+  browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, and which instance the bridge currently routes session commands to.',
+  browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
+  browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.'
+};
+
+const TAB_ID: JsonSchema = { type: 'integer', description: 'Target tab ID from browser_tabs; omit to use the session default tab.' };
+const REF: JsonSchema = { type: 'string', description: 'Element ref returned by browser_snapshot or browser_inventory.' };
+const REVISION: JsonSchema = { type: 'integer', description: 'Snapshot revision that produced the ref; rejects stale refs.' };
+const NUM: JsonSchema = { type: 'number', description: 'Page coordinate in CSS pixels.' };
+
+function object(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
+  return { type: 'object', properties, required, additionalProperties: true };
+}
+
+function refProps(extra: Record<string, JsonSchema> = {}): Record<string, JsonSchema> {
+  return { tabId: TAB_ID, ref: REF, revision: REVISION, ...extra };
+}
+
+const schemas: Record<string, JsonSchema> = {
+  browser_connect: object({}),
+  browser_status: object({}),
+  browser_tabs: object({ full: { type: 'boolean', description: 'Return raw tab objects instead of the compact summary.' } }),
+  browser_open: object({ url: { type: 'string', format: 'uri', description: 'Absolute URL to open in the new tab.' } }, ['url']),
+  browser_close: object({ tabId: TAB_ID }, ['tabId']),
+  browser_focus: object({ tabId: TAB_ID }, ['tabId']),
+  browser_snapshot: object({ tabId: TAB_ID, revision: REVISION }),
+  browser_inventory: object({ tabId: TAB_ID, boundingBox: { type: 'boolean', description: 'Include bounding boxes in the inventory output.' } }),
+  browser_click: object(refProps(), ['ref']),
+  browser_pointer_move: object({ tabId: TAB_ID, x: NUM, y: NUM, buttons: { type: 'integer', description: 'Pointer button bitmask (1 = primary).' } }, ['x', 'y']),
+  browser_pointer_click: object({ tabId: TAB_ID, x: NUM, y: NUM, button: { type: 'string', enum: ['left', 'middle', 'right'], description: 'Mouse button to press.' }, clickCount: { type: 'integer', description: 'Number of clicks (double-click = 2).' } }, ['x', 'y']),
+  browser_pointer_drag: object({ tabId: TAB_ID, from: object({ x: NUM, y: NUM }, ['x', 'y']), to: object({ x: NUM, y: NUM }, ['x', 'y']) }, ['from', 'to']),
+  browser_fill: object(refProps({ value: { type: 'string', description: 'Value to set on the field.' } }), ['ref', 'value']),
+  browser_type: object(refProps({ text: { type: 'string', description: 'Text to type into the field.' } }), ['ref', 'text']),
+  browser_press: object(refProps({ key: { type: 'string', description: 'Key name such as Enter, Tab, Escape, or a single character.' } }), ['key']),
+  browser_select: object(refProps({ value: { type: 'string', description: 'Option value to select.' } }), ['ref', 'value']),
+  browser_scroll: object({ tabId: TAB_ID, x: NUM, y: { type: 'number', description: 'Vertical scroll delta in CSS pixels.' } }),
+  browser_wait: object({ tabId: TAB_ID, milliseconds: { type: 'integer', minimum: 0, maximum: 60000, description: 'Pause duration in milliseconds (0-60000).' } }, ['milliseconds']),
+  browser_screenshot: object({ tabId: TAB_ID }),
+  browser_upload: object({ tabId: TAB_ID, ref: REF, paths: { type: 'array', items: { type: 'string' }, description: 'Local file paths to upload into the file input.' } }, ['paths']),
+  browser_download: object({ tabId: TAB_ID, url: { type: 'string', format: 'uri', description: 'Download URL to save through the browser.' } }, ['url']),
+  browser_cookies: object({ tabId: TAB_ID, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Cookie operation to perform.' }, cookie: { type: 'object', description: 'Cookie details for set; name for remove.' } }, ['action']),
+  browser_storage: object({ tabId: TAB_ID, area: { type: 'string', enum: ['local', 'session'], description: 'Storage area (defaults to local).' }, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Storage operation to perform.' }, key: { type: 'string', description: 'Storage key for set/remove or single-key get.' }, value: { description: 'Value to store for set.' } }, ['action']),
+  browser_evaluate: object({ tabId: TAB_ID, expression: { type: 'string', minLength: 1, maxLength: 10000, description: 'JavaScript expression (1-10000 characters) evaluated in the page MAIN world.' } }, ['expression']),
+  browser_instances: object({}),
+  browser_use_instance: object({ id: { type: 'string', description: 'Instance id returned by browser_instances.' } }, ['id']),
+  browser_disconnect: object({})
+};
+
+export function getToolDefinitions(): Tool[] {
+  return TOOL_NAMES.map(name => ({ name, description: TOOL_DOCS[name], inputSchema: schemas[name] }));
+}
+
+export function registerBrowserTools(bridge: BrowserBridge): Tool[] {
+  return getToolDefinitions();
+}
+
+export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
+  if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
+  if (name === 'browser_instances') return bridge.instances();
+  if (name === 'browser_use_instance') return bridge.useInstance(String(params.id ?? ''));
+  return bridge.request(name, params);
+}

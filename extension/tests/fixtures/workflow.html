@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>FastMCP Fixture</title></head>
+<body>
+  <main>
+    <h1>Automation fixture</h1>
+    <form id="login-form">
+      <label for="email">Email</label><input id="email" type="email" value="">
+      <label for="password">Password</label><input id="password" type="password" value="">
+      <select id="role"><option value="user">User</option><option value="admin">Admin</option></select>
+      <button id="submit" type="submit">Sign in</button>
+    </form>
+    <a href="#docs">Docs</a>
+    <div id="custom-control" role="slider" tabindex="0">Custom control</div>
+    <canvas id="canvas" width="300" height="120"></canvas>
+    <p id="result">Idle</p>
+  </main>
+  <script>
+    document.querySelector('#login-form').addEventListener('submit', event => {
+      event.preventDefault();
+      document.querySelector('#result').textContent = 'Submitted';
+    });
+  </script>
+</body>
+</html>

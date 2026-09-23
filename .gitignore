@@ -1,0 +1,15 @@
+# Agent config — jangan di-push
+AGENTS.md
+AGENT.md
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Logs & local env
+*.log
+.env
+.env.*

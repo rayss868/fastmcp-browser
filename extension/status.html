@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FastMCP Browser</title>
+  <style>
+    :root { color-scheme: light dark; font: 13px system-ui, sans-serif; }
+    body { min-width: 320px; margin: 0; padding: 16px; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 10px; }
+    dt { opacity: .7; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    pre { max-height: 160px; overflow: auto; white-space: pre-wrap; }
+    button { margin-top: 14px; width: 100%; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>FastMCP Browser</h1>
+  <dl>
+    <dt>Connection</dt><dd id="connection">Loading</dd>
+    <dt>Browser</dt><dd id="browser">Unknown</dd>
+    <dt>Protocol</dt><dd id="protocol">1</dd>
+    <dt>Authorized tabs</dt><dd id="tabs">0</dd>
+    <dt>Session</dt><dd id="session">-</dd>
+    <dt>Tab group</dt><dd id="group">-</dd>
+  </dl>
+  <pre id="capabilities">Loading capabilities...</pre>
+  <button id="disconnect" type="button">Disconnect</button>
+  <script type="module" src="status.js"></script>
+</body>
+</html>
