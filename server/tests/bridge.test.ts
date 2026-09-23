@@ -219,3 +219,111 @@ test('useInstance rejects an unknown instance id', async () => {
     await bridge.close();
   }
 });
+
+async function connectEcho(port: number, token: string, instanceId: string) {
+  const socket = await connectInstance(port, token, instanceId);
+  socket.on('message', raw => {
+    const message = JSON.parse(raw.toString()) as { id?: unknown; method?: unknown };
+    if (typeof message.id === 'string') socket.send(JSON.stringify({ id: message.id, ok: true, result: message.method }));
+  });
+  return socket;
+}
+
+async function waitForPeer(peer: ReturnType<typeof createBridge>) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      return await peer.request('browser_probe', {}, 100);
+    } catch {
+      await wait(25);
+    }
+  }
+  return assert.fail('peer never attached to the host bridge');
+}
+
+test('a second bridge on a busy port joins the host instead of crashing', async () => {
+  const port = nextPort++;
+  const host = createBridge(port, 'test-token');
+  const peer = createBridge(port, 'test-token');
+  let socket: WebSocket | undefined;
+  try {
+    socket = await connectEcho(port, 'test-token', 'i-a');
+    assert.equal(await waitForPeer(peer), 'browser_probe', 'peer requests must route through the host bridge');
+    assert.deepEqual(await peer.request('browser_tabs'), 'browser_tabs');
+    assert.equal(host.instances().length, 1, 'the peer socket must not be counted as a browser instance');
+  } finally {
+    socket?.close();
+    await host.close();
+    await peer.close();
+  }
+});
+
+test('extension events reach peer bridges', async () => {
+  const port = nextPort++;
+  const host = createBridge(port, 'test-token');
+  const peer = createBridge(port, 'test-token');
+  let socket: WebSocket | undefined;
+  try {
+    socket = await connectEcho(port, 'test-token', 'i-a');
+    await waitForPeer(peer);
+    const eventPromise = new Promise<{ method: string; params?: unknown }>(resolve => {
+      peer.onEvent(resolve);
+    });
+    socket.send(JSON.stringify({ type: 'event', method: 'page.navigated', params: { tabId: 7, url: 'https://example.com' } }));
+    assert.deepEqual(await eventPromise, {
+      method: 'page.navigated',
+      params: { tabId: 7, url: 'https://example.com' }
+    });
+  } finally {
+    socket?.close();
+    await host.close();
+    await peer.close();
+  }
+});
+
+test('peer useInstance reroutes commands on the host', async () => {
+  const port = nextPort++;
+  const host = createBridge(port, 'test-token');
+  const peer = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  try {
+    sockets.push(await connectEcho(port, 'test-token', 'i-a'));
+    sockets.push(await connectEcho(port, 'test-token', 'i-b'));
+    await waitForPeer(peer);
+    await wait(30);
+    const selected = peer.useInstance('i-b') as { active: string };
+    assert.equal(selected.active, 'i-b');
+    assert.equal(host.useInstance('i-b').active, 'i-b', 'peer selection must reach the host bridge');
+    assert.deepEqual(await peer.request('browser_status'), 'browser_status');
+  } finally {
+    for (const socket of sockets) socket.close();
+    await host.close();
+    await peer.close();
+  }
+});
+
+test('peer takes over hosting when the host closes', async () => {
+  const port = nextPort++;
+  const host = createBridge(port, 'test-token');
+  const peer = createBridge(port, 'test-token');
+  let socket: WebSocket | undefined;
+  try {
+    socket = await connectEcho(port, 'test-token', 'i-a');
+    await waitForPeer(peer);
+
+    await host.close();
+
+    let promoted: WebSocket | undefined;
+    for (let attempt = 0; attempt < 60 && !promoted; attempt++) {
+      try {
+        promoted = await connectEcho(port, 'test-token', 'i-b');
+      } catch {
+        await wait(50);
+      }
+    }
+    assert.ok(promoted, 'the peer must bind the port after the host exits');
+    promoted.close();
+  } finally {
+    socket?.close();
+    await peer.close();
+  }
+});

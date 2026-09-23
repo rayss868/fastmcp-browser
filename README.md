@@ -10,7 +10,7 @@
 
 - **28 MCP tools**, full schema footprint ≈ **3.3k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 24/24, extension 46/46, build green for Chromium + Firefox
+- **Tests**: server 28/28, extension 46/46, build green for Chromium + Firefox
 
 ---
 
@@ -184,7 +184,7 @@ The first-connected profile is active by default; if the active one disconnects,
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 24 unit/workflow/security tests
+cd server   && npm test    # build + 28 unit/workflow/security tests
 cd extension && node --test tests/*.test.mjs   # 46 session/router/bridge tests
 ```
 
@@ -193,7 +193,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ## Troubleshooting
 
 - **Extension shows "not connected"** — the MCP server must be running first (it hosts the WebSocket bridge on `127.0.0.1:9229`). Start the server, the extension retries every 1.5 seconds automatically.
-- **Port 9229 already in use** — the extension side is fixed to port 9229, so free that port (stop the other process) rather than changing only `FASTMCP_PORT`.
+- **Port 9229 already in use** — if it's another FastMCP Browser server (a second agent/CLI), nothing to do: the new instance detects it and automatically joins that bridge as a peer, so every session drives the same extension in parallel (`FASTMCP_TOKEN` must match on both). If the port is held by an unrelated process, free it — the extension side is fixed to port 9229.
 - **Commands time out right after loading the extension** — reload the extension after rebuilding (`node build.mjs`), the service worker may still run the old bundle.
 - **`load unpacked` fails** — select the folder that contains `manifest.json` (the `chromium` or `firefox` folder itself).
 - **Multiple profiles** — install/enable the extension in each profile you want to control, then use `browser_instances` to confirm both are connected.
@@ -216,7 +216,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   └── superpowers/                    # design spec, plan, baseline benchmark
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (28 registry)
-│   ├── tests/      # 24 tests
+│   ├── tests/      # 28 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
