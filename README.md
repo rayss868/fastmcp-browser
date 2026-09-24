@@ -69,7 +69,7 @@ Context vs the wider MCP browser landscape:
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
 
-No honest head-to-head end-to-end latency benchmark exists yet between FastMCP and Playwright MCP — that is tracked as future work in [docs/superpowers/benchmarks](docs/superpowers/benchmarks).
+No honest head-to-head end-to-end latency benchmark exists yet between FastMCP and Playwright MCP.
 
 ## Architecture
 
@@ -183,11 +183,37 @@ browser_tabs / snapshot   → operate inside the selected profile
 
 The first-connected profile is active by default; if the active one disconnects, the newest surviving instance is promoted automatically.
 
+## Capabilities
+
+The extension popup displays detected capabilities per browser profile:
+
+```json
+{
+  "tabs": true,
+  "dom": true,
+  "snapshot": true,
+  "cookies": true,
+  "screenshot": "bitmap",
+  "inventory": true,
+  "upload": true,
+  "download": true,
+  "evaluate": true,
+  "network": "metadata",
+  "network_response_body": "partial",
+  "network_intercept": false,
+  "network_modify": false
+}
+```
+
+- **`network_response_body: "partial"`** — Firefox only; Chromium returns `false`. Firefox captures up to 64 KB of text response body per request via `webRequest.filterResponseData()`.
+- **`network_intercept: false`** / **`network_modify: false`** — requests cannot be blocked or modified; the extension is a passive observer.
+- **`screenshot: "bitmap"`** — PNG raster capture; set `fullPage: true` to scroll-stitch the entire page into one image.
+
 ## Testing
 
 ```bash
 cd server   && npm test    # build + 28 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 54 session/router/bridge/network/screenshot tests
+cd extension && node --test tests/*.test.mjs   # 61 session/router/bridge/network/screenshot tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -214,8 +240,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ├── README.md
 ├── docs/
 │   ├── banner.png                      # README hero
-│   ├── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
-│   └── superpowers/                    # design spec, plan, baseline benchmark
+│   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (28 registry)
 │   ├── tests/      # 28 tests
@@ -237,8 +262,6 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ## More
 
 - [docs/research-browser-automation.md](docs/research-browser-automation.md) — full landscape research & comparison notes
-- [docs/superpowers/specs](docs/superpowers/specs) — original design spec
-- [docs/superpowers/benchmarks](docs/superpowers/benchmarks) — baseline + verification results
 
 ## License
 
