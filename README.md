@@ -185,6 +185,8 @@ The first-connected profile is active by default; if the active one disconnects,
 
 ## Capabilities
 
+![Extension popup showing detected capabilities](docs/extension-popup-capabilities.png)
+
 The extension popup displays detected capabilities per browser profile:
 
 ```json
