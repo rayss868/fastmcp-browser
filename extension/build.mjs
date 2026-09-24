@@ -39,6 +39,7 @@ async function build(target) {
   await copyFile(resolve(source, 'background.js'), resolve(out, 'background.js'));
   await copyFile(resolve(source, 'router.js'), resolve(out, 'router.js'));
   await copyFile(resolve(source, 'session.js'), resolve(out, 'session.js'));
+  await copyFile(resolve(source, 'network-monitor.js'), resolve(out, 'network-monitor.js'));
   await copyFile(resolve(source, 'adapters/compatibility.js'), resolve(out, 'adapters/compatibility.js'));
   await copyFile(resolve(source, 'adapters/runtime.js'), resolve(out, 'adapters/runtime.js'));
   await copyFile(resolve(source, `${target === 'firefox' ? 'adapters/firefox.js' : 'adapters/chromium.js'}`), resolve(out, `adapters/${target}.js`));

@@ -11,7 +11,9 @@ const baseCapabilities = {
   upload: true,
   download: true,
   evaluate: true,
-  network_observe: 'partial',
+  network_observe: 'live-metadata-headers-upload',
+  network_request_body: true,
+  network_response_body: false,
   network_intercept: false,
   browser_debugger: false,
   os_pointer: false
@@ -81,6 +83,7 @@ function createAdapter(api, browser) {
     },
     capabilities: () => ({
       ...baseCapabilities,
+      network_response_body: typeof api.webRequest?.filterResponseData === 'function',
       tab_groups: typeof api.tabGroups?.update === 'function' && typeof api.tabs.group === 'function'
         ? 'native'
         : 'logical'

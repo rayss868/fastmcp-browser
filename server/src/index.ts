@@ -17,7 +17,10 @@ const schemas = {
   browser_connect: z.object({}),
   browser_status: z.object({}),
   browser_tabs: z.object({ full: z.boolean().optional().describe('Return raw tab objects instead of the compact summary.') }),
-  browser_open: z.object({ url: z.string().url().describe('Absolute URL to open in the new tab.') }),
+  browser_open: z.object({
+    url: z.string().url().describe('Absolute URL to open.'),
+    newTab: z.boolean().optional().describe('Open in a separate background tab instead of reusing the live Automation tab.')
+  }),
   browser_close: z.object({ tabId: z.number().int() }),
   browser_focus: z.object({ tabId: z.number().int() }),
   browser_snapshot: z.object({ tabId, revision }),
@@ -32,9 +35,9 @@ const schemas = {
   browser_select: pageInput.extend({ value: z.string() }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
-  browser_screenshot: z.object({ tabId }),
+  browser_screenshot: z.object({ tabId, fullPage: z.boolean().optional().describe('Capture and stitch the entire page into one PNG instead of the visible viewport.') }),
   browser_upload: z.object({ tabId, ref, revision, paths: z.array(z.string()).min(1).describe('Local file paths read on the MCP host and attached as upload files.') }),
-  browser_network: z.object({ tabId, limit: z.number().int().min(1).max(500).optional().describe('Maximum number of most recent resource requests to return.') }),
+  browser_network: z.object({ tabId, limit: z.number().int().min(1).max(500).optional().describe('Maximum number of recent live request records to return, including request/response headers and available upload-body data; sensitive headers are omitted, upload body data is capped at 8 KB, and Firefox captures up to 64 KB of text response body per request while Chromium does not capture response bodies.') }),
   browser_download: z.object({ tabId, url: z.string().url() }),
   browser_cookies: z.object({ tabId, action: z.enum(['get', 'set', 'remove']), cookie: z.record(z.unknown()).optional() }),
   browser_storage: z.object({ tabId, area: z.enum(['local', 'session']).default('local'), action: z.enum(['get', 'set', 'remove']), key: z.string().optional(), value: z.unknown().optional() }),

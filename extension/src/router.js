@@ -11,8 +11,7 @@ const PAGE_METHODS = new Set([
   'browser_pointer_move',
   'browser_pointer_click',
   'browser_pointer_drag',
-  'browser_evaluate',
-  'browser_network'
+  'browser_evaluate'
 ]);
 
 const TAB_METHODS = new Set([
@@ -22,7 +21,8 @@ const TAB_METHODS = new Set([
   'browser_cookies',
   'browser_storage',
   'browser_download',
-  'browser_upload'
+  'browser_upload',
+  'browser_network'
 ]);
 
 const BROWSER_METHODS = new Set([
@@ -31,6 +31,7 @@ const BROWSER_METHODS = new Set([
   'browser_tabs',
   'browser_open',
   'browser_disconnect',
+  'browser_network',
   ...PAGE_METHODS,
   ...TAB_METHODS
 ]);
@@ -70,7 +71,7 @@ function summarizeTabs(result) {
   return Array.isArray(result) ? result.map(summarizeTab) : result;
 }
 
-export function createCommandRouter({ execute, capabilities = {}, resolveTabId }) {
+export function createCommandRouter({ execute, capabilities = {}, resolveTabId, network = () => [] }) {
   const authorizedTabs = new Set();
 
   return {
@@ -115,7 +116,9 @@ export function createCommandRouter({ execute, capabilities = {}, resolveTabId }
         throw routerError(`Unsupported browser method: ${method}`, 'UNSUPPORTED_CAPABILITY');
       }
 
-      const result = await execute(method, params, context);
+      const result = method === 'browser_network'
+        ? network(tabIdOf(params.tabId), params.limit)
+        : await execute(method, params, context);
 
       if (context.signal?.aborted) throw cancellationError();
 

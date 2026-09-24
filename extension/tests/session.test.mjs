@@ -113,6 +113,60 @@ test('native session creates one Automation group for many tabs', async () => {
   assert.deepEqual(second.browser, browser);
 });
 
+test('openTab creates a separate background tab when requested', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  const created = [];
+  let nextTabId = 40;
+  api.tabs.create = async properties => {
+    const tab = { id: nextTabId++, url: properties.url, active: properties.active };
+    created.push(tab);
+    api.alive.add(tab.id);
+    return tab;
+  };
+  api.tabs.update = async (tabId, properties) => ({ id: tabId, ...properties });
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+  await session.openTab('https://first.test');
+
+  const second = await session.openTab('https://second.test', { newTab: true });
+
+  assert.equal(created.length, 2);
+  assert.equal(second.id, created[1].id);
+  assert.equal(second.active, false);
+  assert.deepEqual((await session.info()).tabIds, [created[0].id, created[1].id]);
+});
+
+test('openTab reuses the live automation tab, including concurrent opens', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  const created = [];
+  const updated = [];
+  let nextTabId = 40;
+  api.tabs.create = async properties => {
+    const tab = { id: nextTabId++, url: properties.url, active: properties.active };
+    created.push(tab);
+    api.alive.add(tab.id);
+    return tab;
+  };
+  api.tabs.update = async (tabId, properties) => {
+    updated.push({ tabId, ...properties });
+    return { id: tabId, ...properties };
+  };
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  const [first, second] = await Promise.all([
+    session.openTab('https://first.test'),
+    session.openTab('https://second.test')
+  ]);
+
+  assert.equal(created.length, 1);
+  assert.equal(created[0].active, false);
+  assert.equal(first.id, created[0].id);
+  assert.equal(second.id, created[0].id);
+  assert.deepEqual(updated, [{ tabId: created[0].id, url: 'https://second.test' }]);
+  assert.deepEqual((await session.info()).tabIds, [created[0].id]);
+});
+
 test('session persists across manager instances', async () => {
   const storage = createStorage();
   const api = createNativeApi(storage);

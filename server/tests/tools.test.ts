@@ -10,14 +10,21 @@ test('registry exposes only planned tool names', () => {
   assert.equal(TOOL_NAMES.length, 28);
 });
 
-test('browser_network is registered with a described input schema', () => {
+test('browser_network is documented as a live metadata buffer', () => {
   const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
   const network = byName.get('browser_network');
   assert.ok(network, 'browser_network missing from the registry');
-  assert.match(network.description, /resource|request/i);
+  assert.match(network.description, /observe live requests/i);
   const props = network.inputSchema.properties as Record<string, { description?: string }>;
   assert.ok(props.tabId?.description, 'browser_network.tabId missing description');
   assert.ok(props.limit?.description, 'browser_network.limit missing description');
+  assert.match(network.description, /in-memory buffer/i);
+  assert.match(network.description, /request and response headers/i);
+  assert.match(network.description, /upload-body data/i);
+  assert.match(network.description, /headers are omitted/i);
+  assert.match(network.description, /Firefox also captures up to 64 KB of text response bodies/i);
+  assert.match(network.description, /Chromium does not capture response bodies/i);
+  assert.match(network.description, /requests cannot be blocked or modified/i);
 });
 
 test('every tool ships an informative description', () => {
@@ -34,6 +41,12 @@ test('documented tools expose described input schema properties', () => {
   assert.equal(open.inputSchema.type, 'object');
   assert.match(String((open.inputSchema.properties as Record<string, { description?: string }>).url?.description), /url/i);
   assert.deepEqual(open.inputSchema.required, ['url']);
+  const openProps = open.inputSchema.properties as Record<string, { description?: string }>;
+  assert.match(String(openProps.newTab?.description), /separate background tab/i);
+
+  const screenshot = byName.get('browser_screenshot')!;
+  const screenshotProps = screenshot.inputSchema.properties as Record<string, { description?: string }>;
+  assert.match(String(screenshotProps.fullPage?.description), /entire page/i);
 
   const click = byName.get('browser_click')!;
   const clickProps = click.inputSchema.properties as Record<string, { description?: string }>;

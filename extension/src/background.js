@@ -1,4 +1,6 @@
 import { createCommandRouter } from './router.js';
+import { captureFullPage } from './screenshot.js';
+import { createNetworkMonitor } from './network-monitor.js';
 import { detectBrowser, createSessionManager, bridgeIdentity } from './session.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
@@ -6,6 +8,11 @@ const PORT = 9229;
 const contentFiles = ['src/content/engine.js'];
 let socket;
 let connected = false;
+const networkMonitor = createNetworkMonitor(api.webRequest, 200, {
+  filterResponseData: typeof api.webRequest?.filterResponseData === 'function'
+    ? requestId => api.webRequest.filterResponseData(requestId)
+    : undefined
+});
 const session = createSessionManager({
   api,
   browser: detectBrowser(typeof navigator === 'undefined' ? '' : navigator.userAgent, {
@@ -79,6 +86,7 @@ const router = createCommandRouter({
     return attachSession(method, await command(method, params));
   },
   capabilities: { upload: true },
+  network: (tabId, limit) => networkMonitor.get(tabId, limit),
   resolveTabId: async () => (await session.info()).tabIds[0]
 });
 
@@ -151,16 +159,18 @@ async function callPage(tabId, method, params) {
 
 async function tabs(method, params) {
   if (method === 'browser_tabs') return api.tabs.query({});
-  if (method === 'browser_open') return api.tabs.create({ url: String(params.url), active: false });
+  if (method === 'browser_open') return session.openTab(String(params.url), { newTab: params.newTab === true });
   if (method === 'browser_close') return api.tabs.remove(Number(params.tabId));
   if (method === 'browser_focus') return api.tabs.update(Number(params.tabId), { active: true });
   throw Object.assign(new Error(`Unsupported tab method: ${method}`), { code: 'UNSUPPORTED_CAPABILITY' });
 }
 
 async function screenshot(params) {
-  const tab = await api.tabs.get(Number(params.tabId));
+  const tabId = Number(params.tabId);
+  if (params.fullPage === true) return captureFullPage(api, tabId);
+  const tab = await api.tabs.get(tabId);
   const dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
-  const metadata = await callPage(Number(params.tabId), 'browser_screenshot', params);
+  const metadata = await callPage(tabId, 'browser_screenshot', params);
   return { ...metadata, dataUrl };
 }
 
@@ -226,14 +236,14 @@ async function download(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload', 'browser_network'];
+  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload'];
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
   if (method === 'browser_cookies') return cookies(params);
   if (method === 'browser_storage') return storage(params);
   if (method === 'browser_download') return download(params);
   if (['browser_tabs', 'browser_open', 'browser_close', 'browser_focus'].includes(method)) return tabs(method, params);
-  if (method === 'browser_status' || method === 'browser_connect') return { connected: true, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', storage: true, cookies: true, upload: false, download: true, evaluate: true, network_observe: 'partial', network_intercept: false, browser_debugger: false, os_pointer: false } };
+  if (method === 'browser_status' || method === 'browser_connect') return { connected: true, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', storage: true, cookies: true, upload: false, download: true, evaluate: true, network_observe: 'live-metadata-headers-upload', network_request_body: true, network_response_body: typeof api.webRequest?.filterResponseData === 'function', network_intercept: false, browser_debugger: false, os_pointer: false } };
   if (method === 'browser_disconnect') return { connected: false };
   throw Object.assign(new Error(`Unsupported capability: ${method}`), { code: 'UNSUPPORTED_CAPABILITY' });
 }
@@ -262,6 +272,7 @@ function start() {
 }
 
 api.tabs.onRemoved?.addListener((tabId, removeInfo) => {
+  networkMonitor.clearTab(tabId);
   emit('tab.removed', { tabId, windowId: removeInfo.windowId });
 });
 
@@ -290,7 +301,9 @@ api.runtime.onMessage?.addListener(async message => {
         upload: true,
         download: true,
         evaluate: true,
-        network_observe: 'partial',
+        network_observe: 'live-metadata-headers-upload',
+        network_request_body: true,
+        network_response_body: typeof api.webRequest?.filterResponseData === 'function',
         network_intercept: false,
         browser_debugger: false,
         os_pointer: false,

@@ -70,7 +70,8 @@ test('chromium adapter normalizes promise WebExtension APIs', async () => {
   assert.deepEqual(adapter.capabilities(), {
     tabs: true, dom: true, snapshot: true, inventory: true,
     screenshot: 'bitmap', storage: true, cookies: true, upload: true,
-    download: true, evaluate: true, network_observe: 'partial',
+    download: true, evaluate: true, network_observe: 'live-metadata-headers-upload',
+    network_request_body: true, network_response_body: false,
     network_intercept: false, browser_debugger: false, os_pointer: false,
     tab_groups: 'logical'
   });
@@ -97,6 +98,8 @@ test('firefox adapter exposes the same normalized contract', async () => {
   assert.equal(typeof adapter.cookies.getAll, 'function');
   assert.equal(typeof adapter.storage.local.set, 'function');
   assert.equal(typeof adapter.downloads.download, 'function');
+  api.webRequest = { filterResponseData() {} };
+  assert.equal(adapter.capabilities().network_response_body, true);
   assert.equal(adapter.capabilities().browser_debugger, false);
   assert.equal(adapter.capabilities().tab_groups, 'logical');
   await assert.rejects(

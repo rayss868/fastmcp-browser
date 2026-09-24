@@ -12,6 +12,7 @@ for (const target of ['chromium', 'firefox']) {
     assert.equal(manifest.manifest_version, 3);
     assert.equal(manifest.background.service_worker ?? manifest.background.scripts[0], target === 'chromium' ? 'background.js' : 'background.js');
     assert.equal(manifest.permissions.includes('debugger'), false);
+    assert.equal(manifest.permissions.includes('webRequest'), true);
     assert.equal(manifest.permissions.includes('scripting'), true);
     assert.equal(manifest.permissions.includes('tabs'), true);
   });

@@ -99,8 +99,26 @@ export function createSessionManager({
     }
   }
 
+  let opening = Promise.resolve();
+
   return {
     mode,
+
+    async openTab(url, { newTab = false } = {}) {
+      const operation = opening.then(async () => {
+        const s = await ensure();
+        const openTabs = newTab ? [] : await api.tabs.query({});
+        const reusableTabId = newTab ? undefined : s.tabIds.find(id => openTabs.some(tab => tab.id === id));
+        const tab = reusableTabId === undefined
+          ? await api.tabs.create({ url, active: false })
+          : await api.tabs.update(reusableTabId, { url });
+        const tabId = Number(tab?.id ?? reusableTabId);
+        if (Number.isInteger(tabId)) await this.addTab(tabId);
+        return tab;
+      });
+      opening = operation.catch(() => {});
+      return operation;
+    },
 
     async addTab(tabId) {
       const s = await ensure();

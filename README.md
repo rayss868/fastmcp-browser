@@ -10,7 +10,7 @@
 
 - **28 MCP tools**, full schema footprint ≈ **3.3k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 28/28, extension 46/46, build green for Chromium + Firefox
+- **Tests**: server 28/28, extension 61/61, build green for Chromium + Firefox
 
 ---
 
@@ -157,17 +157,19 @@ Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + e
 | Timing | `browser_wait` |
 | Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` |
 | Upload | `browser_upload` |
-| Network observe | `browser_network` |
+| Network observe | `browser_network` (live request/response headers and bounded upload metadata; Firefox captures up to 64 KB of text response body per request; no blocking or modification) |
 
 ### Example session
 
 ```text
-browser_open     { url: "https://example.com" }   → new tab joins the Automation group
+browser_open     { url: "https://example.com" }   → reuse the live Automation tab, or create one if needed
+browser_open     { url: "https://example.org", newTab: true } → open a separate background tab in the Automation group
 browser_snapshot { }                              → semantic element list with refs
 browser_fill     { ref: "r12", value: "hello" }   → set input value + fire change events
 browser_click    { ref: "r45", revision: 3 }      → click; revision rejects stale refs
 browser_upload   { ref: "r50", paths: ["/tmp/a.pdf"] } → file read on host, attached to input
-browser_network  { limit: 50 }                     → resources the tab already loaded (Resource Timing)
+browser_screenshot { fullPage: true }              → capture the entire page as one PNG
+browser_network  { limit: 50 }                     → recent live request metadata buffered for the tab
 browser_status   { }                              → session, group, and tab state
 ```
 
@@ -185,7 +187,7 @@ The first-connected profile is active by default; if the active one disconnects,
 
 ```bash
 cd server   && npm test    # build + 28 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 46 session/router/bridge tests
+cd extension && node --test tests/*.test.mjs   # 54 session/router/bridge/network/screenshot tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -228,9 +230,9 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ## Limitations (on purpose)
 
 - **Opening the OS file-chooser dialog** is impossible for extensions; `browser_upload` works by setting files programmatically instead (max 25MB per file).
-- **No network interception/capture** — `browser_network` observes resources the page already loaded (Resource Timing: url, type, duration, size, status), but requests cannot be seen live or modified, and there is no browser debugger protocol.
+- `browser_network` observes live requests per tab using the WebExtensions `webRequest` API, including request/response headers and available upload-body data. Firefox also captures up to 64 KB of text response body per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted; upload data is limited to 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified. The buffer clears when a tab closes or the extension background process restarts.
 - **No headless / browser launching** — it automates browsers that are already running.
-- Screenshot is bitmap (viewport capture), not full-page vector output.
+- Screenshot output is PNG (raster). By default it captures the visible viewport; set `fullPage: true` on `browser_screenshot` to scroll and stitch the entire page into one PNG. This does not produce vector output.
 
 ## More
 
