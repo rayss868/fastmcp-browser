@@ -45,7 +45,6 @@ async function build(target) {
   await copyFile(resolve(source, 'adapters/runtime.js'), resolve(out, 'adapters/runtime.js'));
   await copyFile(resolve(source, `${target === 'firefox' ? 'adapters/firefox.js' : 'adapters/chromium.js'}`), resolve(out, `adapters/${target}.js`));
   await copyContentEngine(out);
-  await copyFile(resolve(source, 'content/entry.js'), resolve(out, 'src/content/entry.js'));
   await copyFile(resolve(source, 'status.js'), resolve(out, 'status.js'));
   await copyFile(resolve(extension, 'status.html'), resolve(out, 'status.html'));
   await mkdir(resolve(out, 'icons'), { recursive: true });

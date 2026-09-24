@@ -35,7 +35,7 @@ async function attachSession(method, result) {
     await session.reconcile();
     const info = await session.info();
     router.adopt(info.tabIds);
-    return { ...result, session: info, buildTag: 'eval-v5' };
+    return { ...result, session: info };
   }
   if (method === 'browser_connect') {
     await session.reconcile();
@@ -291,7 +291,6 @@ api.runtime.onMessage?.addListener(async message => {
       protocolVersion: 1,
       authorizedTabs: info.tabIds.length,
       session: info,
-      buildTag: 'eval-v5',
       capabilities: {
         tabs: true,
         dom: true,

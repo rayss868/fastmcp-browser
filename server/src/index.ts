@@ -6,7 +6,7 @@ import { TOOL_NAMES, TOOL_DOCS, callBrowserTool } from './tools.js';
 
 const port = Number(process.env.FASTMCP_PORT ?? 9229);
 const bridge = createBridge(port);
-const server = new McpServer({ name: 'fastmcp-browser', version: '0.1.0' });
+const server = new McpServer({ name: 'fastmcp-browser', version: '0.1.4' });
 
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
 const revision = z.number().int().optional().describe('Snapshot revision used to reject stale refs.');

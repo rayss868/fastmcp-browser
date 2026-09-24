@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FastMCP Browser",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Extension-native browser automation bridge without CDP.",
   "permissions": ["storage", "tabs", "scripting", "cookies", "downloads", "activeTab", "tabGroups", "alarms", "webRequest"],
   "host_permissions": ["<all_urls>"],
