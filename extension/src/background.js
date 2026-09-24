@@ -283,12 +283,14 @@ api.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
 
 api.runtime.onMessage?.addListener(async message => {
   if (message?.method === 'status.get') {
+    const info = await session.info();
+    router.adopt(info.tabIds);
     return {
       connected,
       browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible',
       protocolVersion: 1,
-      authorizedTabs: router.authorizedTabs.size,
-      session: await session.info(),
+      authorizedTabs: info.tabIds.length,
+      session: info,
       buildTag: 'eval-v5',
       capabilities: {
         tabs: true,
