@@ -8,9 +8,9 @@
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
 
-- **28 MCP tools**, full schema footprint ≈ **3.3k tokens**
+- **29 MCP tools**, full schema footprint ≈ **3.3k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 28/28, extension 61/61, build green for Chromium + Firefox
+- **Tests**: server 30/30, extension 63/63, build green for Chromium + Firefox
 
 ---
 
@@ -41,7 +41,7 @@
 2. **No CDP / no `chrome.debugger`** — nothing to attach, nothing for anti-bot layers to see as an automation driver. (Honest caveat: it is still automation on the page — it reduces fingerprints, it is not invisibility.)
 3. **Multi-profile as a first class citizen** — two profiles with the same extension connected at once; `browser_instances` lists them (stable `instanceId`, browser brand, active-tab hint), `browser_use_instance` reroutes the bridge. Playwright MCP needs one process per profile.
 4. **Persistent session model** — tabs join an `Automation` tab group; the session survives across AI runs and keeps `tabIds` reconciled.
-5. **Tiny context cost** — the *entire* 28-tool schema is ~3.3k tokens; snapshots return compact `ref` handles instead of raw DOM.
+5. **Tiny context cost** — the *entire* 29-tool schema is ~3.3k tokens; snapshots return compact `ref` handles instead of raw DOM.
 6. **Loopback-only bridge** — `127.0.0.1:9229`, token-authenticated. No external endpoints, works behind middleware/AI gateways with no proxy config (a known Playwright MCP HTTP/SSE pain point).
 
 ## Benchmark
@@ -64,7 +64,7 @@ Context vs the wider MCP browser landscape:
 | Metric | FastMCP Browser | @playwright/mcp | Notes / source |
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
-| Schema footprint (all tools) | **~3.3k tokens / 28 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
+| Schema footprint (all tools) | **~3.3k tokens / 29 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
 | Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 (see [docs/research-browser-automation.md](docs/research-browser-automation.md)) |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
@@ -79,7 +79,7 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 │  Claude, etc │                 │  tools → bridge  │   token handshake        │  background SW + content  │
 └──────────────┘                 └──────────────────┘   multi-instance         │  engine (page MAIN world) │
                                     │  bridge.ts        routing + promote      └───────────────────────────┘
-                                    │  tools.ts (28)                                               │
+                                    │  tools.ts (29)                                               │
                                     └─ index.ts (MCP SDK, zod)                                     ▼
                                                                                     chrome.* APIs, NO CDP
 ```
@@ -144,7 +144,7 @@ The extension auto-connects to `ws://127.0.0.1:9229` and keeps a stable per-prof
 
 Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + extension must match).
 
-## Tool reference (28)
+## Tool reference (29)
 
 | Group | Tools |
 |---|---|
@@ -152,10 +152,10 @@ Token defaults to `fastmcp-local-dev`; override with `FASTMCP_TOKEN` (server + e
 | **Instance / profile** | `browser_instances`, `browser_use_instance` |
 | Tabs & session | `browser_tabs`, `browser_open`, `browser_close`, `browser_focus` |
 | Read the page | `browser_snapshot`, `browser_inventory`, `browser_screenshot` |
-| Interact | `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_select` |
+| Interact | `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_select`, `browser_fill_form` (fills many fields plus an optional submit in one call) |
 | Pointer & scroll | `browser_pointer_move`, `browser_pointer_click`, `browser_pointer_drag`, `browser_scroll` |
 | Timing | `browser_wait` |
-| Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` |
+| Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` (pass `ref` + `revision` to scope the script to one snapshot element, no selector needed) |
 | Upload | `browser_upload` |
 | Network observe | `browser_network` (live request/response headers and bounded upload metadata; Firefox captures up to 64 KB of text response body per request; no blocking or modification) |
 
@@ -214,8 +214,8 @@ The extension popup displays detected capabilities per browser profile:
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 28 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 61 session/router/bridge/network/screenshot tests
+cd server   && npm test    # build + 30 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 63 session/router/bridge/network/screenshot tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -244,13 +244,13 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   ├── banner.png                      # README hero
 │   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 ├── server/
-│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (28 registry)
-│   ├── tests/      # 28 tests
+│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (29 registry)
+│   ├── tests/      # 30 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 46 tests
+    ├── tests/      # 63 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 

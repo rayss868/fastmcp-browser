@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCommandRouter } from '../src/router.js';
+import { createCommandRouter, routerMethods } from '../src/router.js';
+
+test('browser_fill_form is a page method the router authorizes and dispatches', async () => {
+  assert.ok(routerMethods.page.includes('browser_fill_form'), 'browser_fill_form missing from PAGE_METHODS');
+  const forwarded = [];
+  const router = createCommandRouter({
+    execute: async (method, params) => {
+      forwarded.push({ method, params });
+      if (method === 'browser_tabs') return [{ id: 5, url: 'https://example.com' }];
+      return { filled: params.fields.length };
+    }
+  });
+
+  await assert.rejects(
+    router.handle('browser_fill_form', { tabId: 5, fields: [] }),
+    error => error.code === 'PERMISSION_DENIED'
+  );
+
+  await router.handle('browser_tabs');
+  const fields = [{ ref: 'e1', value: 'a@example.com' }, { ref: 'e2', value: 'secret' }];
+  assert.deepEqual(
+    await router.handle('browser_fill_form', { tabId: 5, revision: 2, fields, submit: 'e9' }),
+    { filled: 2 }
+  );
+  assert.deepEqual(forwarded[1], { method: 'browser_fill_form', params: { tabId: 5, revision: 2, fields, submit: 'e9' } });
+});
 
 test('router requires an authorized tab for network observation', async () => {
   const router = createCommandRouter({ execute: async () => ({ ok: true }) });

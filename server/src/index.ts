@@ -6,7 +6,7 @@ import { TOOL_NAMES, TOOL_DOCS, callBrowserTool } from './tools.js';
 
 const port = Number(process.env.FASTMCP_PORT ?? 9229);
 const bridge = createBridge(port);
-const server = new McpServer({ name: 'fastmcp-browser', version: '0.1.4' });
+const server = new McpServer({ name: 'fastmcp-browser', version: '0.1.5' });
 
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
 const revision = z.number().int().optional().describe('Snapshot revision used to reject stale refs.');
@@ -33,6 +33,15 @@ const schemas = {
   browser_type: pageInput.extend({ text: z.string() }),
   browser_press: pageInput.extend({ key: z.string() }),
   browser_select: pageInput.extend({ value: z.string() }),
+  browser_fill_form: z.object({
+    tabId,
+    revision,
+    fields: z.array(z.object({
+      ref: z.string().describe('Element ref returned by browser_snapshot or browser_inventory.'),
+      value: z.union([z.string(), z.number(), z.boolean()]).describe('Value to set: text for inputs/textareas, option value or label for selects, boolean for checkboxes and radios.')
+    })).min(1).describe('Form fields to fill in a single call.'),
+    submit: z.string().optional().describe('Optional ref of a button to click after every field is filled.')
+  }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
   browser_screenshot: z.object({ tabId, fullPage: z.boolean().optional().describe('Capture and stitch the entire page into one PNG instead of the visible viewport.') }),
@@ -41,7 +50,7 @@ const schemas = {
   browser_download: z.object({ tabId, url: z.string().url() }),
   browser_cookies: z.object({ tabId, action: z.enum(['get', 'set', 'remove']), cookie: z.record(z.unknown()).optional() }),
   browser_storage: z.object({ tabId, area: z.enum(['local', 'session']).default('local'), action: z.enum(['get', 'set', 'remove']), key: z.string().optional(), value: z.unknown().optional() }),
-  browser_evaluate: z.object({ tabId, expression: z.string().min(1).max(10000).describe('JavaScript expression (1-10000 characters) evaluated in the page MAIN world.') }),
+  browser_evaluate: z.object({ tabId, expression: z.string().min(1).max(10000).describe('JavaScript expression (1-10000 characters) evaluated in the page MAIN world. With ref, the resolved element is available as `element`.'), ref, revision }),
   browser_instances: z.object({}),
   browser_use_instance: z.object({ id: z.string().describe('Instance id returned by browser_instances.') }),
   browser_disconnect: z.object({})

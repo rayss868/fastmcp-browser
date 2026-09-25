@@ -1,4 +1,5 @@
 import { createCommandRouter } from './router.js';
+import { createPageEvaluator } from './evaluate.js';
 import { captureFullPage } from './screenshot.js';
 import { createNetworkMonitor } from './network-monitor.js';
 import { detectBrowser, createSessionManager, bridgeIdentity } from './session.js';
@@ -45,44 +46,11 @@ async function attachSession(method, result) {
   return result;
 }
 
-async function evaluateInPage(params) {
-  const tabId = Number(params?.tabId);
-  if (!Number.isInteger(tabId)) {
-    throw Object.assign(new Error('tabId is required for browser_evaluate.'), { code: 'INVALID_ARGUMENT' });
-  }
-  const expression = String(params?.expression ?? '').trim();
-  if (!expression || expression.length > 10000) {
-    throw Object.assign(new Error('Expression must contain 1-10000 characters.'), { code: 'INVALID_ARGUMENT' });
-  }
-  let results;
-  try {
-    results = await api.scripting.executeScript({
-      target: { tabId },
-      // MAIN world: extension CSP forbids unsafe-eval in the isolated world,
-      // so eval/Function only work under the target page's CSP here.
-      world: 'MAIN',
-      func: expr => eval(expr),
-      args: [expression]
-    });
-  } catch (err) {
-    throw Object.assign(new Error(`Evaluation failed: ${err?.message ?? String(err)}`), { code: 'INVALID_ARGUMENT' });
-  }
-  const value = results?.[0]?.result;
-  let serialized;
-  try {
-    serialized = JSON.stringify(value ?? null);
-  } catch (err) {
-    throw Object.assign(new Error(`Evaluation result is not serializable: ${err?.message ?? String(err)}`), { code: 'ACTION_TIMEOUT' });
-  }
-  if (serialized.length > 1000000) {
-    throw Object.assign(new Error('Evaluation result exceeds 1 MB.'), { code: 'ACTION_TIMEOUT' });
-  }
-  return JSON.parse(serialized);
-}
+const evaluator = createPageEvaluator({ scripting: api.scripting, inject: tabId => inject(tabId) });
 
 const router = createCommandRouter({
   execute: async (method, params) => {
-    if (method === 'browser_evaluate') return evaluateInPage(params);
+    if (method === 'browser_evaluate') return evaluator.evaluate(params);
     return attachSession(method, await command(method, params));
   },
   capabilities: { upload: true },
@@ -125,6 +93,7 @@ async function callPage(tabId, method, params) {
       if (name === 'browser_type') return engine.fill(input.ref, input.revision, input.text);
       if (name === 'browser_press') return engine.press(input.key, input.ref, input.revision);
       if (name === 'browser_select') return engine.select(input.ref, input.revision, input.value);
+      if (name === 'browser_fill_form') return engine.fillForm(input.fields, input.revision, input.submit);
       if (name === 'browser_wait') {
         const milliseconds = Number(input.milliseconds);
         if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > 120000) {

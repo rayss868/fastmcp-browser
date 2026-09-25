@@ -52,7 +52,7 @@ type Tool = { name: string; description: string; inputSchema: JsonSchema };
 export const TOOL_NAMES = [
   'browser_connect', 'browser_status', 'browser_tabs', 'browser_open', 'browser_close', 'browser_focus',
   'browser_snapshot', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
-  'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_scroll',
+  'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_scroll',
   'browser_wait', 'browser_screenshot', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
   'browser_storage', 'browser_evaluate', 'browser_instances', 'browser_use_instance', 'browser_disconnect'
 ] as const;
@@ -74,6 +74,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_type: 'Set text into the field identified by ref, emitting input events like real typing.',
   browser_press: 'Dispatch a keyboard key press on the page, optionally targeting the element ref first.',
   browser_select: 'Choose an option value on the select element identified by ref.',
+  browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value pairs from the latest snapshot, and an optional submit ref to click afterward. Inputs, textareas, contenteditable, selects, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad ref does not waste the whole call.',
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle.',
   browser_screenshot: 'Capture a PNG dataUrl of the visible viewport by default. Set fullPage:true to scroll the page and stitch viewport captures into one full-page PNG; the active tab and original scroll position are restored afterward.',
@@ -82,7 +83,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
   browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
-  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result.',
+  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected.',
   browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, and which instance the bridge currently routes session commands to.',
   browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
   browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.'
@@ -121,6 +122,20 @@ const schemas: Record<string, JsonSchema> = {
   browser_type: object(refProps({ text: { type: 'string', description: 'Text to type into the field.' } }), ['ref', 'text']),
   browser_press: object(refProps({ key: { type: 'string', description: 'Key name such as Enter, Tab, Escape, or a single character.' } }), ['key']),
   browser_select: object(refProps({ value: { type: 'string', description: 'Option value to select.' } }), ['ref', 'value']),
+  browser_fill_form: object({
+    tabId: TAB_ID,
+    revision: REVISION,
+    fields: {
+      type: 'array',
+      minItems: 1,
+      description: 'Form fields to fill in a single call; each entry targets a ref from the latest snapshot.',
+      items: object({
+        ref: REF,
+        value: { type: ['string', 'number', 'boolean'], description: 'Value to set: text for inputs/textareas, option value or label for selects, boolean for checkboxes and radios.' }
+      }, ['ref', 'value'])
+    },
+    submit: { type: 'string', description: 'Optional ref of a button to click after every field is filled.' }
+  }, ['fields']),
   browser_scroll: object({ tabId: TAB_ID, x: NUM, y: { type: 'number', description: 'Vertical scroll delta in CSS pixels.' } }),
   browser_wait: object({ tabId: TAB_ID, milliseconds: { type: 'integer', minimum: 0, maximum: 60000, description: 'Pause duration in milliseconds (0-60000).' } }, ['milliseconds']),
   browser_screenshot: object({ tabId: TAB_ID, fullPage: { type: 'boolean', description: 'Capture and stitch the entire page into one PNG instead of the visible viewport.' } }),
@@ -129,7 +144,12 @@ const schemas: Record<string, JsonSchema> = {
   browser_download: object({ tabId: TAB_ID, url: { type: 'string', format: 'uri', description: 'Download URL to save through the browser.' } }, ['url']),
   browser_cookies: object({ tabId: TAB_ID, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Cookie operation to perform.' }, cookie: { type: 'object', description: 'Cookie details for set; name for remove.' } }, ['action']),
   browser_storage: object({ tabId: TAB_ID, area: { type: 'string', enum: ['local', 'session'], description: 'Storage area (defaults to local).' }, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Storage operation to perform.' }, key: { type: 'string', description: 'Storage key for set/remove or single-key get.' }, value: { description: 'Value to store for set.' } }, ['action']),
-  browser_evaluate: object({ tabId: TAB_ID, expression: { type: 'string', minLength: 1, maxLength: 10000, description: 'JavaScript expression (1-10000 characters) evaluated in the page MAIN world.' } }, ['expression']),
+  browser_evaluate: object({
+    tabId: TAB_ID,
+    expression: { type: 'string', minLength: 1, maxLength: 10000, description: 'JavaScript expression (1-10000 characters) evaluated in the page MAIN world. With ref, the resolved element is bound as `element`; a function expression is called with it.' },
+    ref: REF,
+    revision: REVISION
+  }, ['expression']),
   browser_instances: object({}),
   browser_use_instance: object({ id: { type: 'string', description: 'Instance id returned by browser_instances.' } }, ['id']),
   browser_disconnect: object({})

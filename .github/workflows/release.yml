@@ -27,7 +27,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            WebExtension builds of FastMCP Browser (28 MCP tools, including `browser_upload` and `browser_network`).
+            WebExtension builds of FastMCP Browser (29 MCP tools, including `browser_upload`, `browser_network`, and `browser_fill_form`).
 
             Unzip the archive, then load it unpacked:
             - **Chromium** (`fastmcp-browser-extension-chromium.zip`) → `chrome://extensions` → Load unpacked → the `chromium` folder

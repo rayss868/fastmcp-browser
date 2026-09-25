@@ -7,7 +7,32 @@ import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/too
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 28);
+  assert.equal(TOOL_NAMES.length, 29);
+});
+
+test('browser_fill_form batches fields and an optional submit in one call', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const fillForm = byName.get('browser_fill_form');
+  assert.ok(fillForm, 'browser_fill_form missing from the registry');
+  const props = fillForm.inputSchema.properties as Record<string, { description?: string; type?: string; items?: unknown }>;
+  assert.equal(props.fields?.type, 'array');
+  assert.ok(props.fields?.description, 'browser_fill_form.fields missing description');
+  assert.ok(props.submit?.description, 'browser_fill_form.submit missing description');
+  assert.deepEqual(fillForm.inputSchema.required, ['fields']);
+  const items = props.fields.items as { properties: Record<string, { description?: string }>; required: string[] };
+  assert.ok(items.properties.ref?.description, 'browser_fill_form.fields[].ref missing description');
+  assert.ok(items.properties.value?.description, 'browser_fill_form.fields[].value missing description');
+  assert.deepEqual(items.required, ['ref', 'value']);
+});
+
+test('browser_evaluate accepts an optional ref and revision for element-scoped evaluation', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const evaluate = byName.get('browser_evaluate');
+  assert.ok(evaluate, 'browser_evaluate missing from the registry');
+  const props = evaluate.inputSchema.properties as Record<string, { description?: string }>;
+  assert.ok(props.ref?.description, 'browser_evaluate.ref missing description');
+  assert.ok(props.revision?.description, 'browser_evaluate.revision missing description');
+  assert.deepEqual(evaluate.inputSchema.required, ['expression']);
 });
 
 test('browser_network is documented as a live metadata buffer', () => {

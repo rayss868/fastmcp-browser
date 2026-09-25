@@ -6,6 +6,7 @@ const PAGE_METHODS = new Set([
   'browser_type',
   'browser_press',
   'browser_select',
+  'browser_fill_form',
   'browser_wait',
   'browser_scroll',
   'browser_pointer_move',
