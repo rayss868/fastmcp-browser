@@ -108,7 +108,7 @@ npm run build      # outputs dist/src/index.js
 
 ### 2. Load the extension
 
-**No build needed:** grab `fastmcp-browser-extension-chromium.zip` or `fastmcp-browser-extension-firefox.zip` from the [GitHub Releases](../../releases) page (published automatically on every `v*` tag), unzip, and load the extracted folder (see steps below).
+**No build needed:** download `fastmcp-browser-extension-firefox.xpi` for Firefox/LibreWolf, or the Chromium/Firefox `.zip` archives for unpacked installation, from [GitHub Releases](../../releases) (published on each `v*` tag).
 
 Or build it yourself:
 
@@ -117,10 +117,19 @@ cd extension
 node build.mjs     # writes dist/chromium and dist/firefox
 ```
 
+To package the Firefox build locally as an unsigned `.xpi` (Python 3), run this from `extension/`:
+
+```bash
+python -c "from pathlib import Path; from zipfile import ZipFile, ZIP_DEFLATED; root = Path('dist/firefox'); z = ZipFile('dist/fastmcp-browser-extension-firefox.xpi', 'w', ZIP_DEFLATED); [z.write(p, p.relative_to(root).as_posix()) for p in root.rglob('*') if p.is_file()]; z.close()"
+```
+
+The archive must contain `manifest.json` at its root, not under a `firefox/` directory. On Linux/macOS, the equivalent is `(cd dist/firefox && zip -r ../fastmcp-browser-extension-firefox.xpi .)`.
+
 The manifest `version` is injected at build time from `VERSION` (env) or the latest `v*` git tag, so the distributed extension always matches the release tag. It is not stored in the source manifests.
 
-- **Chromium/Edge/Brave/Opera/Vivaldi** → `chrome://extensions` → *Load unpacked* → the `chromium` folder
-- **Firefox** → `about:debugging` → *Load Temporary Add-on* → `firefox/manifest.json`
+- **Chromium/Edge/Brave/Opera/Vivaldi** → `chrome://extensions` → *Load unpacked* → the `chromium` folder from the `.zip` archive
+- **Firefox (temporary)** → `about:debugging` → *Load Temporary Add-on* → `firefox/manifest.json` from the Firefox `.zip` archive; this disappears on browser restart
+- **LibreWolf (persistent, if unsigned add-ons are enabled)** → `about:addons` → gear icon → *Install Add-on From File* → select the `.xpi`. LibreWolf may need `xpinstall.signatures.required=false` in its profile settings. The generated `.xpi` is unsigned; standard Firefox release builds require Mozilla signing for permanent installation. Do not disable signature checks on standard Firefox to install an unsigned archive.
 
 The extension auto-connects to `ws://127.0.0.1:9229` and keeps a stable per-profile `instanceId`.
 
@@ -128,7 +137,7 @@ The extension auto-connects to `ws://127.0.0.1:9229` and keeps a stable per-prof
 
 **Option A, MCP Registry (once published):** install the server named `fastmcp-browser` through your client's MCP Registry command; no clone or build needed. Until the registry entry is live, use Option B.
 
-**Option B, download the extension zip** from [GitHub Releases](../../releases) (no build needed), unzip, and load it unpacked (step 2 above).
+**Option B, download a release archive:** get the Firefox `.xpi` or an unpacked `.zip` from [GitHub Releases](../../releases), then follow the browser-specific installation steps above.
 
 **Option C, manual config** (`.mcp.json` / `.openclaude.json`), pointing at your local clone:
 
