@@ -18,6 +18,8 @@ jobs:
       - name: Build extension
         run: node build.mjs
         working-directory: extension
+        env:
+          VERSION: ${{ github.ref_name }}
       - name: Package zips
         run: |
           cd extension/dist

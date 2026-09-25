@@ -1,10 +1,22 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { applyManifestVersion, resolveVersion } from './build-version.mjs';
 
 const extension = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const source = resolve(extension, 'src');
 const distRoot = resolve(extension, 'dist');
+
+function gitTag() {
+  try {
+    return execFileSync('git', ['describe', '--tags', '--abbrev=0'], { cwd: extension, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+}
+
+const version = resolveVersion({ env: process.env, tag: gitTag() });
 
 async function copyFile(from, to) {
   await writeFile(to, await readFile(from));
@@ -52,10 +64,11 @@ async function build(target) {
   for (const size of [16, 32, 48, 128]) {
     await copyFile(resolve(extension, `assets/icons/icon-${size}.png`), resolve(out, `icons/icon-${size}.png`));
   }
-  await copyFile(resolve(extension, `manifest.${target}.json`), resolve(out, 'manifest.json'));
+  const manifest = JSON.parse(await readFile(resolve(extension, `manifest.${target}.json`), 'utf8'));
+  await writeFile(resolve(out, 'manifest.json'), `${JSON.stringify(applyManifestVersion(manifest, version), null, 2)}\n`);
 }
 
 await build('chromium');
 await build('firefox');
 await writeFile(resolve(distRoot, '.built'), `${new Date().toISOString()}\n`);
-console.log(`Built extension targets in ${distRoot}`);
+console.log(`Built extension targets in ${distRoot} (version ${version})`);

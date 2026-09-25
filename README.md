@@ -117,6 +117,8 @@ cd extension
 node build.mjs     # writes dist/chromium and dist/firefox
 ```
 
+The manifest `version` is injected at build time from `VERSION` (env) or the latest `v*` git tag, so the distributed extension always matches the release tag. It is not stored in the source manifests.
+
 - **Chromium/Edge/Brave/Opera/Vivaldi** → `chrome://extensions` → *Load unpacked* → the `chromium` folder
 - **Firefox** → `about:debugging` → *Load Temporary Add-on* → `firefox/manifest.json`
 
@@ -215,7 +217,7 @@ The extension popup displays detected capabilities per browser profile:
 
 ```bash
 cd server   && npm test    # build + 30 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 63 session/router/bridge/network/screenshot tests
+cd extension && node --test tests/*.test.mjs   # 66 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -250,7 +252,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 63 tests
+    ├── tests/      # 66 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
