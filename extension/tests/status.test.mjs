@@ -15,3 +15,9 @@ test('status UI is packaged and exposes required fields', async () => {
   assert.match(script, /status\.get/);
   assert.match(script, /browser_disconnect/);
 });
+
+test('status popup formats the browser info object instead of stringifying it', async () => {
+  const script = await readFile(resolve(root, 'src/status.js'), 'utf8');
+  assert.match(script, /formatBrowserDetail/);
+  assert.doesNotMatch(script, /status\.browser\s*\}\s*`/);
+});
