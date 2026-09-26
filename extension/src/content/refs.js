@@ -1,5 +1,6 @@
 export function createReferenceStore() {
   const refs = new Map();
+  const descriptors = new Map();
   let revision = 1;
 
   return {
@@ -11,13 +12,17 @@ export function createReferenceStore() {
       revision += 1;
       return revision;
     },
-    refFor(element, prefix = 'e') {
+    refFor(element, prefix = 'e', descriptor) {
       for (const [ref, target] of refs) {
         if (target === element) return ref;
       }
       const ref = `${prefix}${refs.size + 1}`;
       refs.set(ref, element);
+      if (descriptor) descriptors.set(ref, descriptor);
       return ref;
+    },
+    descriptorFor(ref) {
+      return descriptors.get(ref);
     },
     resolve(ref, expectedRevision) {
       if (expectedRevision !== revision) {

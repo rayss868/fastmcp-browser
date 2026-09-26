@@ -11,7 +11,8 @@ const server = new McpServer({ name: 'fastmcp-browser', version: '0.1.6' });
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
 const revision = z.number().int().optional().describe('Snapshot revision used to reject stale refs.');
 const ref = z.string().optional().describe('Element ref returned by browser_snapshot or browser_inventory.');
-const pageInput = z.object({ tabId, revision, ref }).passthrough();
+const selector = z.string().optional().describe('CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale.');
+const pageInput = z.object({ tabId, revision, ref, selector }).passthrough();
 
 const schemas = {
   browser_connect: z.object({}),
@@ -23,7 +24,15 @@ const schemas = {
   }),
   browser_close: z.object({ tabId: z.number().int() }),
   browser_focus: z.object({ tabId: z.number().int() }),
-  browser_snapshot: z.object({ tabId, revision }),
+  browser_snapshot: z.object({
+    tabId,
+    revision,
+    scope: z.enum(['viewport', 'dialog', 'form']).optional().describe('Restrict the snapshot to on-screen elements, the open dialog/modal, or form controls.'),
+    selector,
+    interactiveOnly: z.boolean().optional().describe('Return only interactive roles.'),
+    maxDepth: z.number().int().min(1).max(50).optional().describe('Maximum ancestor depth from the document root.'),
+    limit: z.number().int().min(1).max(1000).optional().describe('Maximum number of elements to return.')
+  }),
   browser_inventory: z.object({ tabId, boundingBox: z.boolean().optional() }),
   browser_click: pageInput,
   browser_pointer_move: z.object({ tabId, x: z.number(), y: z.number(), buttons: z.number().int().optional() }),
@@ -37,15 +46,25 @@ const schemas = {
     tabId,
     revision,
     fields: z.array(z.object({
-      ref: z.string().describe('Element ref returned by browser_snapshot or browser_inventory.'),
+      ref: z.string().optional().describe('Element ref returned by browser_snapshot or browser_inventory.'),
+      selector: z.string().optional().describe('CSS selector alternative to ref for this field.'),
       value: z.union([z.string(), z.number(), z.boolean()]).describe('Value to set: text for inputs/textareas, option value or label for selects, boolean for checkboxes and radios.')
     })).min(1).describe('Form fields to fill in a single call.'),
-    submit: z.string().optional().describe('Optional ref of a button to click after every field is filled.')
+    submit: z.string().optional().describe('Optional ref of a button to click after every field is filled.'),
+    submitSelector: z.string().optional().describe('Optional CSS selector of a button to click after every field is filled.')
   }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
+  browser_wait_for: z.object({
+    tabId,
+    selector,
+    text: z.string().optional().describe('Page text to wait for (state defaults to "text").'),
+    state: z.enum(['visible', 'attached', 'text', 'dom_stable', 'network_idle']).optional().describe('Condition to wait for.'),
+    timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum time to wait in milliseconds (default 30000).'),
+    stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle in milliseconds.')
+  }),
   browser_screenshot: z.object({ tabId, fullPage: z.boolean().optional().describe('Capture and stitch the entire page into one PNG instead of the visible viewport.') }),
-  browser_upload: z.object({ tabId, ref, revision, paths: z.array(z.string()).min(1).describe('Local file paths read on the MCP host and attached as upload files.') }),
+  browser_upload: z.object({ tabId, ref, revision, selector, paths: z.array(z.string()).min(1).describe('Local file paths read on the MCP host and attached as upload files.') }),
   browser_network: z.object({ tabId, limit: z.number().int().min(1).max(500).optional().describe('Maximum number of recent live request records to return, including request/response headers and available upload-body data; sensitive headers are omitted, upload body data is capped at 8 KB, and Firefox captures up to 64 KB of text response body per request while Chromium does not capture response bodies.') }),
   browser_download: z.object({ tabId, url: z.string().url() }),
   browser_cookies: z.object({ tabId, action: z.enum(['get', 'set', 'remove']), cookie: z.record(z.unknown()).optional() }),

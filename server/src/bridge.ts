@@ -255,7 +255,7 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
         });
       }
       const target = activeSocket;
-      if (closed || !target || target.readyState !== 1) return Promise.reject(Object.assign(new Error('No browser connection'), { code: 'NO_CONNECTION' }));
+      if (closed || !target || target.readyState !== 1) return Promise.reject(Object.assign(new Error('No browser connection'), { code: 'NO_CONNECTION', retryable: true }));
       const id = `r${++counter}`;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => { pending.delete(id); reject(Object.assign(new Error('Browser request timed out'), { code: 'ACTION_TIMEOUT' })); }, timeoutMs);

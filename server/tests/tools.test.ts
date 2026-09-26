@@ -7,7 +7,7 @@ import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/too
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 29);
+  assert.equal(TOOL_NAMES.length, 30);
 });
 
 test('browser_fill_form batches fields and an optional submit in one call', () => {
@@ -21,8 +21,9 @@ test('browser_fill_form batches fields and an optional submit in one call', () =
   assert.deepEqual(fillForm.inputSchema.required, ['fields']);
   const items = props.fields.items as { properties: Record<string, { description?: string }>; required: string[] };
   assert.ok(items.properties.ref?.description, 'browser_fill_form.fields[].ref missing description');
+  assert.ok(items.properties.selector?.description, 'browser_fill_form.fields[].selector missing description');
   assert.ok(items.properties.value?.description, 'browser_fill_form.fields[].value missing description');
-  assert.deepEqual(items.required, ['ref', 'value']);
+  assert.deepEqual(items.required, ['value']);
 });
 
 test('browser_evaluate accepts an optional ref and revision for element-scoped evaluation', () => {
@@ -75,10 +76,23 @@ test('documented tools expose described input schema properties', () => {
 
   const click = byName.get('browser_click')!;
   const clickProps = click.inputSchema.properties as Record<string, { description?: string }>;
-  for (const field of ['tabId', 'ref', 'revision']) {
+  for (const field of ['tabId', 'ref', 'revision', 'selector']) {
     assert.ok(clickProps[field]?.description, `browser_click.${field} missing description`);
   }
-  assert.deepEqual(click.inputSchema.required, ['ref']);
+  assert.deepEqual(click.inputSchema.required, []);
+
+  const snapshot = byName.get('browser_snapshot')!;
+  const snapshotProps = snapshot.inputSchema.properties as Record<string, { description?: string }>;
+  for (const field of ['scope', 'selector', 'interactiveOnly', 'maxDepth', 'limit']) {
+    assert.ok(snapshotProps[field]?.description, `browser_snapshot.${field} missing description`);
+  }
+
+  const waitFor = byName.get('browser_wait_for')!;
+  const waitForProps = waitFor.inputSchema.properties as Record<string, { description?: string }>;
+  for (const field of ['selector', 'text', 'state', 'timeoutMs', 'stableMs']) {
+    assert.ok(waitForProps[field]?.description, `browser_wait_for.${field} missing description`);
+  }
+  assert.deepEqual(waitFor.inputSchema.required, []);
 
   const evaluate = byName.get('browser_evaluate')!;
   const evaluateProps = evaluate.inputSchema.properties as Record<string, { description?: string }>;

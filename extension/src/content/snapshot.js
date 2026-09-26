@@ -1,6 +1,10 @@
 import { boundingBox } from './refs.js';
 
 const MAX_RESPONSE_BYTES = 1000000;
+const INTERACTIVE_ROLES = new Set([
+  'button', 'link', 'textbox', 'combobox', 'checkbox', 'radio', 'switch',
+  'tab', 'option', 'menuitem', 'searchbox', 'slider', 'spinbutton'
+]);
 
 function bounded(result) {
   const serialized = JSON.stringify(result);
@@ -11,14 +15,57 @@ function bounded(result) {
 }
 
 export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }) {
-  function snapshot() {
+  function inViewport(element) {
+    const rect = element.getBoundingClientRect();
+    return rect.bottom > 0 && rect.right > 0 && rect.top < windowRef.innerHeight && rect.left < windowRef.innerWidth;
+  }
+
+  function contains(root, element) {
+    return root === element || (typeof root.contains === 'function' && root.contains(element));
+  }
+
+  function matchesScope(element, options) {
+    if (options.selector) {
+      const roots = documentRef.querySelectorAll(options.selector);
+      let contained = false;
+      for (const root of roots) {
+        if (contains(root, element)) { contained = true; break; }
+      }
+      if (!contained) return false;
+    }
+    if (options.scope === 'viewport') {
+      if (!inViewport(element)) return false;
+    } else if (options.scope === 'dialog') {
+      const dialog = typeof documentRef.querySelector === 'function'
+        ? documentRef.querySelector('[role="dialog"],[aria-modal="true"],dialog[open]')
+        : null;
+      if (!dialog || !contains(dialog, element)) return false;
+    } else if (options.scope === 'form') {
+      if (typeof element.closest !== 'function' || !element.closest('form')) return false;
+    }
+    if (options.maxDepth !== undefined) {
+      let depth = 0;
+      let node = element.parentElement;
+      while (node) { depth += 1; node = node.parentElement; }
+      if (depth > Number(options.maxDepth)) return false;
+    }
+    if (options.interactiveOnly && !INTERACTIVE_ROLES.has(semantics.role(element))) return false;
+    return true;
+  }
+
+  function snapshot(options = {}) {
     refs.reset();
-    const elements = semantics.candidates().map(element => {
+    const limit = Number(options.limit) || 0;
+    const elements = [];
+    for (const element of semantics.candidates()) {
+      if (!matchesScope(element, options)) continue;
       const tag = element.tagName.toLowerCase();
+      const role = semantics.role(element);
+      const name = semantics.name(element);
       const item = {
-        ref: refs.refFor(element),
-        role: semantics.role(element),
-        name: semantics.name(element),
+        ref: refs.refFor(element, 'e', { role, name }),
+        role,
+        name,
         visible: true,
         tag
       };
@@ -31,8 +78,9 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
         item.checked = element.checked;
         item.value = element.type === 'password' ? '[REDACTED]' : element.value;
       } else if (isButton) item.disabled = element.disabled;
-      return item;
-    });
+      elements.push(item);
+      if (limit > 0 && elements.length >= limit) break;
+    }
     return bounded({
       tabId: null,
       url: windowRef.location.href,
@@ -40,6 +88,22 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
       revision: refs.revision,
       elements
     });
+  }
+
+  function catalog(options = {}) {
+    const limit = Number(options.limit) || 400;
+    const items = [];
+    for (const element of semantics.candidates()) {
+      if (items.length >= limit) break;
+      if (!matchesScope(element, options)) continue;
+      const tag = element.tagName.toLowerCase();
+      const item = { role: semantics.role(element), name: semantics.name(element) };
+      if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+        item.value = tag === 'input' && element.type === 'password' ? '[REDACTED]' : element.value;
+      }
+      items.push(item);
+    }
+    return items;
   }
 
   function inventory(options = {}) {
@@ -83,5 +147,5 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     });
   }
 
-  return { snapshot, inventory };
+  return { snapshot, inventory, catalog };
 }

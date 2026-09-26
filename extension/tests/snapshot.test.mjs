@@ -98,3 +98,40 @@ test('inventory groups elements and applies filters', () => {
   assert.ok(result.headings.length >= 1);
   assert.equal(engine.inventory({ filter: 'interactive' }).headings.length, 0);
 });
+
+test('snapshot applies interactiveOnly and limit filters', () => {
+  const { documentRef, windowRef, semantics } = fixture();
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+
+  const interactive = engine.snapshot({ interactiveOnly: true });
+  assert.ok(interactive.elements.length > 0);
+  assert.ok(interactive.elements.every(element => element.role !== 'heading'), 'headings must be filtered out');
+
+  const limited = engine.snapshot({ limit: 2 });
+  assert.equal(limited.elements.length, 2);
+});
+
+test('snapshot applies a selector scope', () => {
+  const { documentRef, windowRef, semantics } = fixture();
+  const scopedDocument = {
+    ...documentRef,
+    querySelectorAll: selector => (selector === '#main' ? documentRef.querySelectorAll().slice(0, 1) : documentRef.querySelectorAll())
+  };
+  const engine = createSnapshotEngine({ documentRef: scopedDocument, windowRef, semantics, refs: createReferenceStore() });
+  const result = engine.snapshot({ selector: '#main' });
+  assert.equal(result.elements.length, 1);
+  assert.equal(result.elements[0].name, 'Save');
+});
+
+test('catalog returns compact descriptors without touching refs', () => {
+  const { documentRef, windowRef, semantics } = fixture();
+  const refs = createReferenceStore();
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs });
+  engine.snapshot();
+  const revision = refs.revision;
+
+  const catalog = engine.catalog();
+  assert.equal(refs.revision, revision, 'catalog must not bump the revision');
+  assert.ok(catalog.length >= 5);
+  assert.deepEqual(Object.keys(catalog[0]).sort(), ['name', 'role']);
+});

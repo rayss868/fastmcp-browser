@@ -53,7 +53,7 @@ export const TOOL_NAMES = [
   'browser_connect', 'browser_status', 'browser_tabs', 'browser_open', 'browser_close', 'browser_focus',
   'browser_snapshot', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
   'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_scroll',
-  'browser_wait', 'browser_screenshot', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
+  'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
   'browser_storage', 'browser_evaluate', 'browser_instances', 'browser_use_instance', 'browser_disconnect'
 ] as const;
 
@@ -64,21 +64,22 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_open: 'Open a URL in the live Automation tab by default. Set newTab:true to open a separate background tab; all automation tabs join the session group.',
   browser_close: 'Close the given tab and revoke its session authorization so it cannot be targeted again.',
   browser_focus: 'Activate the given tab so subsequent page actions target it visibly.',
-  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets. This can be large on busy pages — prefer browser_inventory with filter:"interactive" (or "viewport") for simple locate-and-click tasks, and only use snapshot when you need the full element list.',
+  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets. Narrow it for small tasks: pass scope:"dialog" to return only the currently open dialog/modal, scope:"form" for form controls, scope:"viewport" for on-screen elements, or selector:"main form" to restrict to a CSS subtree; interactiveOnly:true and maxDepth trim further. This can be large on busy pages — prefer browser_inventory with filter:"interactive" for simple locate-and-click tasks.',
   browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter. Recommended default: pass filter:"interactive" (or "viewport") to keep the response small; filter:"all" also includes every text candidate and can be very large.',
-  browser_click: 'Click the element identified by ref from the latest snapshot; pass revision to reject stale refs.',
+  browser_click: 'Click an element by ref from the latest snapshot (pass revision to reject stale refs) or by selector when the DOM rerenders often. Stale refs are re-resolved automatically against the live DOM when the element can be matched again; the response flags recovered:true and includes a compact diff of added/removed/changed elements so a follow-up snapshot is often unnecessary.',
   browser_pointer_move: 'Move the pointer to page coordinates in the active tab for hover-driven UI.',
   browser_pointer_click: 'Click at page coordinates using the virtual pointer in the given tab.',
   browser_pointer_drag: 'Drag from one page coordinate to another in the given tab using pointer events.',
-  browser_fill: 'Replace the value of the input identified by ref and fire change events.',
-  browser_type: 'Set text into the field identified by ref, emitting input events like real typing.',
-  browser_press: 'Dispatch a keyboard key press on the page, optionally targeting the element ref first.',
-  browser_select: 'Choose an option value on the select element identified by ref.',
-  browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value pairs from the latest snapshot, and an optional submit ref to click afterward. Inputs, textareas, contenteditable, selects, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad ref does not waste the whole call.',
+  browser_fill: 'Replace the value of an input by ref (with optional revision) or by selector, and fire change events. Stale refs are re-resolved automatically; the response flags recovered:true and carries a compact DOM diff.',
+  browser_type: 'Set text into a field by ref (with optional revision) or by selector, emitting input events like real typing.',
+  browser_press: 'Dispatch a keyboard key press on the page, optionally targeting an element ref or selector first.',
+  browser_select: 'Choose an option on a native select or an ARIA combobox/listbox (MUI Autocomplete, React Select, custom listboxes) targeted by ref (with optional revision) or selector: pass the option value or visible label; for non-native controls the listbox is opened and the matching role="option" is clicked.',
+  browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value or selector/value pairs, and an optional submit ref (or submitSelector) to click afterward. Each field is re-resolved against the live DOM, so a rerender between fields is recovered automatically. Inputs, textareas, contenteditable, native selects, ARIA comboboxes, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad target does not waste the whole call. The response carries a compact DOM diff.',
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
-  browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle.',
+  browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle. Prefer browser_wait_for when you can name the condition you are waiting on.',
+  browser_wait_for: 'Wait on a tab until a page condition is met instead of sleeping a fixed time: state:"visible" (default with selector) or "attached" for a selector, "text" for page text, "dom_stable" (no DOM mutations for stableMs, default 300), or "network_idle" (no recent resource activity). Survives navigations up to timeoutMs (default 30000, max 120000) and returns satisfied plus the current snapshot revision.',
   browser_screenshot: 'Capture a PNG dataUrl of the visible viewport by default. Set fullPage:true to scroll the page and stitch viewport captures into one full-page PNG; the active tab and original scroll position are restored afterward.',
-  browser_upload: 'Read local files from disk (paths) and attach them to the file input identified by ref; files are read on the MCP host and set via DataTransfer, no OS dialog.',
+  browser_upload: 'Read local files from disk (paths) and attach them to a file input identified by ref (with optional revision) or by selector, or to the page\'s single file input when neither is given; files are read on the MCP host and set via DataTransfer, no OS dialog.',
   browser_network: 'Observe live requests for the given tab, including request and response headers plus available upload-body data. Firefox also captures up to 64 KB of text response bodies per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted. Upload data is capped at 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified. Each record is heavy, so pass a small limit (5-10) and only raise it when you really need more records; the default is 50.',
   browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
@@ -92,6 +93,7 @@ export const TOOL_DOCS: Record<string, string> = {
 const TAB_ID: JsonSchema = { type: 'integer', description: 'Target tab ID from browser_tabs; omit to use the session default tab.' };
 const REF: JsonSchema = { type: 'string', description: 'Element ref returned by browser_snapshot or browser_inventory.' };
 const REVISION: JsonSchema = { type: 'integer', description: 'Snapshot revision that produced the ref; rejects stale refs.' };
+const SELECTOR: JsonSchema = { type: 'string', description: 'CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale.' };
 const NUM: JsonSchema = { type: 'number', description: 'Page coordinate in CSS pixels.' };
 
 function object(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
@@ -99,7 +101,7 @@ function object(properties: Record<string, JsonSchema>, required: string[] = [])
 }
 
 function refProps(extra: Record<string, JsonSchema> = {}): Record<string, JsonSchema> {
-  return { tabId: TAB_ID, ref: REF, revision: REVISION, ...extra };
+  return { tabId: TAB_ID, ref: REF, revision: REVISION, selector: SELECTOR, ...extra };
 }
 
 const schemas: Record<string, JsonSchema> = {
@@ -112,34 +114,52 @@ const schemas: Record<string, JsonSchema> = {
   }, ['url']),
   browser_close: object({ tabId: TAB_ID }, ['tabId']),
   browser_focus: object({ tabId: TAB_ID }, ['tabId']),
-  browser_snapshot: object({ tabId: TAB_ID, revision: REVISION }),
+  browser_snapshot: object({
+    tabId: TAB_ID,
+    revision: REVISION,
+    scope: { type: 'string', enum: ['viewport', 'dialog', 'form'], description: 'Restrict the snapshot to on-screen elements, the open dialog/modal, or form controls.' },
+    selector: SELECTOR,
+    interactiveOnly: { type: 'boolean', description: 'Return only interactive roles (buttons, links, inputs, and so on).' },
+    maxDepth: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum ancestor depth from the document root.' },
+    limit: { type: 'integer', minimum: 1, maximum: 1000, description: 'Maximum number of elements to return.' }
+  }),
   browser_inventory: object({ tabId: TAB_ID, boundingBox: { type: 'boolean', description: 'Include bounding boxes in the inventory output.' } }),
-  browser_click: object(refProps(), ['ref']),
+  browser_click: object(refProps()),
   browser_pointer_move: object({ tabId: TAB_ID, x: NUM, y: NUM, buttons: { type: 'integer', description: 'Pointer button bitmask (1 = primary).' } }, ['x', 'y']),
   browser_pointer_click: object({ tabId: TAB_ID, x: NUM, y: NUM, button: { type: 'string', enum: ['left', 'middle', 'right'], description: 'Mouse button to press.' }, clickCount: { type: 'integer', description: 'Number of clicks (double-click = 2).' } }, ['x', 'y']),
   browser_pointer_drag: object({ tabId: TAB_ID, from: object({ x: NUM, y: NUM }, ['x', 'y']), to: object({ x: NUM, y: NUM }, ['x', 'y']) }, ['from', 'to']),
-  browser_fill: object(refProps({ value: { type: 'string', description: 'Value to set on the field.' } }), ['ref', 'value']),
-  browser_type: object(refProps({ text: { type: 'string', description: 'Text to type into the field.' } }), ['ref', 'text']),
+  browser_fill: object(refProps({ value: { type: 'string', description: 'Value to set on the field.' } }), ['value']),
+  browser_type: object(refProps({ text: { type: 'string', description: 'Text to type into the field.' } }), ['text']),
   browser_press: object(refProps({ key: { type: 'string', description: 'Key name such as Enter, Tab, Escape, or a single character.' } }), ['key']),
-  browser_select: object(refProps({ value: { type: 'string', description: 'Option value to select.' } }), ['ref', 'value']),
+  browser_select: object(refProps({ value: { type: 'string', description: 'Option value or visible label to select.' } }), ['value']),
   browser_fill_form: object({
     tabId: TAB_ID,
     revision: REVISION,
     fields: {
       type: 'array',
       minItems: 1,
-      description: 'Form fields to fill in a single call; each entry targets a ref from the latest snapshot.',
+      description: 'Form fields to fill in a single call; each entry targets a ref or selector, re-resolved against the live DOM.',
       items: object({
         ref: REF,
+        selector: SELECTOR,
         value: { type: ['string', 'number', 'boolean'], description: 'Value to set: text for inputs/textareas, option value or label for selects, boolean for checkboxes and radios.' }
-      }, ['ref', 'value'])
+      }, ['value'])
     },
-    submit: { type: 'string', description: 'Optional ref of a button to click after every field is filled.' }
+    submit: { type: 'string', description: 'Optional ref of a button to click after every field is filled.' },
+    submitSelector: { type: 'string', description: 'Optional CSS selector of a button to click after every field is filled.' }
   }, ['fields']),
   browser_scroll: object({ tabId: TAB_ID, x: NUM, y: { type: 'number', description: 'Vertical scroll delta in CSS pixels.' } }),
   browser_wait: object({ tabId: TAB_ID, milliseconds: { type: 'integer', minimum: 0, maximum: 60000, description: 'Pause duration in milliseconds (0-60000).' } }, ['milliseconds']),
+  browser_wait_for: object({
+    tabId: TAB_ID,
+    selector: SELECTOR,
+    text: { type: 'string', description: 'Page text to wait for (state defaults to "text").' },
+    state: { type: 'string', enum: ['visible', 'attached', 'text', 'dom_stable', 'network_idle'], description: 'Condition to wait for; defaults to visible when selector is set, text when text is set, otherwise dom_stable.' },
+    timeoutMs: { type: 'integer', minimum: 0, maximum: 120000, description: 'Maximum time to wait in milliseconds (default 30000).' },
+    stableMs: { type: 'integer', minimum: 50, maximum: 5000, description: 'Quiet window for dom_stable/network_idle in milliseconds (default 300).' }
+  }),
   browser_screenshot: object({ tabId: TAB_ID, fullPage: { type: 'boolean', description: 'Capture and stitch the entire page into one PNG instead of the visible viewport.' } }),
-  browser_upload: object({ tabId: TAB_ID, ref: REF, paths: { type: 'array', items: { type: 'string' }, description: 'Local file paths to upload into the file input.' } }, ['paths']),
+  browser_upload: object({ tabId: TAB_ID, ref: REF, revision: REVISION, selector: SELECTOR, paths: { type: 'array', items: { type: 'string' }, description: 'Local file paths to upload into the file input.' } }, ['paths']),
   browser_network: object({ tabId: TAB_ID, limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Maximum number of most recent live request records to return.' } }),
   browser_download: object({ tabId: TAB_ID, url: { type: 'string', format: 'uri', description: 'Download URL to save through the browser.' } }, ['url']),
   browser_cookies: object({ tabId: TAB_ID, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Cookie operation to perform.' }, cookie: { type: 'object', description: 'Cookie details for set; name for remove.' } }, ['action']),
@@ -163,13 +183,43 @@ export function registerBrowserTools(bridge: BrowserBridge): Tool[] {
   return getToolDefinitions();
 }
 
+const READ_ONLY_METHODS = new Set([
+  'browser_snapshot', 'browser_inventory', 'browser_status', 'browser_tabs',
+  'browser_network', 'browser_evaluate', 'browser_wait', 'browser_wait_for', 'browser_screenshot'
+]);
+
+function timeoutFor(name: string, params: Record<string, unknown>): number {
+  if (name === 'browser_wait') return Math.min(180000, Number(params.milliseconds ?? 0) + 5000);
+  if (name === 'browser_wait_for') return Math.min(180000, Number(params.timeoutMs ?? 30000) + 5000);
+  if (name === 'browser_screenshot' && params.fullPage === true) return 120000;
+  if (name === 'browser_evaluate') return 30000;
+  return 15000;
+}
+
+function isRetryable(name: string, error: { code?: string; retryable?: boolean }): boolean {
+  const code = error?.code;
+  if (code === 'NO_CONNECTION' || code === 'TAB_NOT_ACCESSIBLE') return true;
+  if (code === 'ACTION_TIMEOUT') return READ_ONLY_METHODS.has(name);
+  return error?.retryable === true;
+}
+
+async function requestWithRecovery(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
+  try {
+    return await bridge.request(name, params, timeoutFor(name, params));
+  } catch (error) {
+    if (!isRetryable(name, error as { code?: string; retryable?: boolean })) throw error;
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return bridge.request(name, params, timeoutFor(name, params));
+  }
+}
+
 export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
   if (name === 'browser_instances') return bridge.instances();
   if (name === 'browser_use_instance') return bridge.useInstance(String(params.id ?? ''));
   if (name === 'browser_upload') {
     const { paths, ...rest } = params;
-    return bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) });
+    return bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) }, timeoutFor(name, params));
   }
-  return bridge.request(name, params);
+  return requestWithRecovery(bridge, name, params);
 }

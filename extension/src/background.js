@@ -79,21 +79,23 @@ async function inject(tabId) {
   await api.scripting.executeScript({ target: { tabId }, files: contentFiles });
 }
 
-async function callPage(tabId, method, params) {
+const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+async function callPage(tabId, method, params, attempt = 0) {
   await inject(tabId);
   const result = await api.scripting.executeScript({
     target: { tabId },
     func: (name, input) => {
       const engine = globalThis.__fastMcp;
       if (!engine) throw Object.assign(new Error('Page engine unavailable'), { code: 'TAB_NOT_ACCESSIBLE' });
-      if (name === 'browser_snapshot') return engine.snapshot();
+      if (name === 'browser_snapshot') return engine.snapshot(input);
       if (name === 'browser_inventory') return engine.inventory(input);
-      if (name === 'browser_click') return engine.actionClick(input.ref, input.revision);
-      if (name === 'browser_fill') return engine.fill(input.ref, input.revision, input.value);
-      if (name === 'browser_type') return engine.fill(input.ref, input.revision, input.text);
-      if (name === 'browser_press') return engine.press(input.key, input.ref, input.revision);
-      if (name === 'browser_select') return engine.select(input.ref, input.revision, input.value);
-      if (name === 'browser_fill_form') return engine.fillForm(input.fields, input.revision, input.submit);
+      if (name === 'browser_click') return engine.actionClick(input);
+      if (name === 'browser_fill') return engine.fill(input, input.value);
+      if (name === 'browser_type') return engine.fill(input, input.text);
+      if (name === 'browser_press') return engine.press(input);
+      if (name === 'browser_select') return engine.select(input, input.value);
+      if (name === 'browser_fill_form') return engine.fillForm(input);
       if (name === 'browser_wait') {
         const milliseconds = Number(input.milliseconds);
         if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > 120000) {
@@ -101,8 +103,9 @@ async function callPage(tabId, method, params) {
         }
         return engine.wait(milliseconds);
       }
-      if (name === 'browser_screenshot') return engine.screenshotTarget(input.ref, input.revision);
-      if (name === 'browser_upload') return engine.upload(input.ref, input.revision, input.files);
+      if (name === 'browser_wait_for') return engine.waitFor(input);
+      if (name === 'browser_screenshot') return engine.screenshotTarget(input);
+      if (name === 'browser_upload') return engine.upload(input, input.files);
       if (name === 'browser_network') return engine.network(input);
       if (name === 'browser_scroll') return engine.scroll(input);
       if (name === 'browser_pointer_move') return engine.pointer({ ...input, type: 'pointermove' });
@@ -118,12 +121,39 @@ async function callPage(tabId, method, params) {
   });
   const value = result?.[0]?.result;
   if (value === undefined || value === null) {
+    // A navigation or crash between inject and execute returns no value; one retry lets the fresh document answer.
+    if (attempt < 1) {
+      await delay(350);
+      return callPage(tabId, method, params, attempt + 1);
+    }
     throw Object.assign(
       new Error(`Page returned no result for ${method}; the tab may be navigating or crashed. Re-run browser_snapshot for fresh refs, then retry.`),
-      { code: 'TAB_NOT_ACCESSIBLE' }
+      { code: 'TAB_NOT_ACCESSIBLE', retryable: true }
     );
   }
   return value;
+}
+
+async function waitForPage(tabId, params) {
+  const total = Math.max(0, Math.min(Number(params.timeoutMs ?? 30000), 120000));
+  const started = Date.now();
+  while (true) {
+    const remaining = total - (Date.now() - started);
+    if (remaining <= 0) {
+      throw Object.assign(
+        new Error(`Timed out after ${total} ms waiting for ${params.state ?? params.selector ?? params.text ?? 'dom_stable'}.`),
+        { code: 'NAVIGATION_TIMEOUT', retryable: true }
+      );
+    }
+    try {
+      // Short slices keep the wait alive across navigations that destroy the content script.
+      const outcome = await callPage(tabId, 'browser_wait_for', { ...params, timeoutMs: Math.min(remaining, 2000) }, 1);
+      if (outcome?.satisfied) return outcome;
+    } catch (error) {
+      if (error?.code !== 'TAB_NOT_ACCESSIBLE') throw error;
+    }
+    await delay(120);
+  }
 }
 
 async function tabs(method, params) {
@@ -205,14 +235,15 @@ async function download(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload'];
+  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload'];
+  if (method === 'browser_wait_for') return waitForPage(Number(params.tabId), params);
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
   if (method === 'browser_cookies') return cookies(params);
   if (method === 'browser_storage') return storage(params);
   if (method === 'browser_download') return download(params);
   if (['browser_tabs', 'browser_open', 'browser_close', 'browser_focus'].includes(method)) return tabs(method, params);
-  if (method === 'browser_status' || method === 'browser_connect') return { connected: true, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', storage: true, cookies: true, upload: false, download: true, evaluate: true, network_observe: 'live-metadata-headers-upload', network_request_body: true, network_response_body: typeof api.webRequest?.filterResponseData === 'function', network_intercept: false, browser_debugger: false, os_pointer: false } };
+  if (method === 'browser_status' || method === 'browser_connect') return { connected: true, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', storage: true, cookies: true, upload: true, download: true, evaluate: true, network_observe: 'live-metadata-headers-upload', network_request_body: true, network_response_body: typeof api.webRequest?.filterResponseData === 'function', network_intercept: false, browser_debugger: false, os_pointer: false } };
   if (method === 'browser_disconnect') return { connected: false };
   throw Object.assign(new Error(`Unsupported capability: ${method}`), { code: 'UNSUPPORTED_CAPABILITY' });
 }

@@ -74,6 +74,17 @@ test('reference store rejects stale and disconnected references', () => {
   assert.throws(() => store.resolve(disconnectedRef, store.revision), error => error.code === 'ELEMENT_NOT_FOUND');
 });
 
+test('reference store keeps descriptors across resets for re-resolution', () => {
+  const store = createReferenceStore();
+  const element = { isConnected: true };
+  const ref = store.refFor(element, 'e', { role: 'button', name: 'Save' });
+
+  assert.deepEqual(store.descriptorFor(ref), { role: 'button', name: 'Save' });
+  store.reset();
+  assert.deepEqual(store.descriptorFor(ref), { role: 'button', name: 'Save' }, 'descriptor must survive reset');
+  assert.equal(store.descriptorFor('e404'), undefined);
+});
+
 test('boundingBox rounds DOM rectangles', () => {
   const element = {
     getBoundingClientRect: () => ({ x: 1.6, y: 2.4, width: 10.5, height: 20.5 })
