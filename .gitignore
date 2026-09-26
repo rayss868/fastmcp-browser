@@ -1,6 +1,7 @@
 # Agent config — jangan di-push
 AGENTS.md
 AGENT.md
+.memory/
 
 # Dependencies
 node_modules/
