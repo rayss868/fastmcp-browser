@@ -198,6 +198,9 @@ function timeoutFor(name: string, params: Record<string, unknown>): number {
 
 function isRetryable(name: string, error: { code?: string; retryable?: boolean }): boolean {
   const code = error?.code;
+  // An explicit retryable:false comes from the page-side guard that stops an
+  // action whose effect is unknown from being replayed.
+  if (error?.retryable === false) return false;
   if (code === 'NO_CONNECTION' || code === 'TAB_NOT_ACCESSIBLE') return true;
   if (code === 'ACTION_TIMEOUT') return READ_ONLY_METHODS.has(name);
   return error?.retryable === true;

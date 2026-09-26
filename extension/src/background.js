@@ -81,6 +81,12 @@ async function inject(tabId) {
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+const ACTION_METHODS = new Set([
+  'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select',
+  'browser_fill_form', 'browser_upload', 'browser_scroll', 'browser_pointer_move',
+  'browser_pointer_click', 'browser_pointer_drag'
+]);
+
 async function callPage(tabId, method, params, attempt = 0) {
   await inject(tabId);
   const result = await api.scripting.executeScript({
@@ -121,14 +127,16 @@ async function callPage(tabId, method, params, attempt = 0) {
   });
   const value = result?.[0]?.result;
   if (value === undefined || value === null) {
-    // A navigation or crash between inject and execute returns no value; one retry lets the fresh document answer.
-    if (attempt < 1) {
+    // A navigation between inject and execute returns no value. Retrying is safe
+    // for reads; for an action it could repeat a side effect we cannot observe, so
+    // report the unknown state instead of firing twice.
+    if (attempt < 1 && !ACTION_METHODS.has(method)) {
       await delay(350);
       return callPage(tabId, method, params, attempt + 1);
     }
     throw Object.assign(
       new Error(`Page returned no result for ${method}; the tab may be navigating or crashed. Re-run browser_snapshot for fresh refs, then retry.`),
-      { code: 'TAB_NOT_ACCESSIBLE', retryable: true }
+      { code: 'TAB_NOT_ACCESSIBLE', retryable: !ACTION_METHODS.has(method) }
     );
   }
   return value;

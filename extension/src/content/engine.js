@@ -5,7 +5,11 @@ import { createPointerController } from './pointer.js';
 import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
 
-const refs = createReferenceStore();
+// The content script is re-injected at the start of every MCP call. Reuse the
+// surface from a previous injection so a ref from an earlier snapshot stays
+// resolvable within the same document; only a real navigation starts fresh.
+const surface = globalThis.__fastMcp;
+const refs = surface?.state?.refs ?? createReferenceStore();
 const semantics = createDomSemantics(document, window);
 const discovery = createSnapshotEngine({
   documentRef: document,
@@ -13,7 +17,7 @@ const discovery = createSnapshotEngine({
   semantics,
   windowRef: window
 });
-const state = {
+const state = surface?.state ?? {
   get revision() { return refs.revision; },
   refs,
   observer: null,
@@ -294,5 +298,8 @@ function network(input = {}) {
 }
 
 window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, screenshotTarget, scroll, pointer, upload, network, state };
-state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
-state.observer.observe(document.documentElement, { subtree: true, childList: true });
+if (!state.observer) {
+  // Re-injection would otherwise stack one observer per MCP call.
+  state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
+  state.observer.observe(document.documentElement, { subtree: true, childList: true });
+}
