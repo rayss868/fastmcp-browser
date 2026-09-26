@@ -51,6 +51,7 @@ const evaluator = createPageEvaluator({ scripting: api.scripting, inject: tabId 
 const router = createCommandRouter({
   execute: async (method, params) => {
     if (method === 'browser_evaluate') return evaluator.evaluate(params);
+    if (method === 'browser_inspect') return evaluator.inspect(params);
     return attachSession(method, await command(method, params));
   },
   capabilities: { upload: true },
@@ -75,8 +76,16 @@ async function token() {
   return stored.fastmcpToken ?? 'fastmcp-local-dev';
 }
 
-async function inject(tabId) {
-  await api.scripting.executeScript({ target: { tabId }, files: contentFiles });
+async function inject(tabId, target = {}) {
+  await api.scripting.executeScript({ target: { tabId, ...target }, files: contentFiles });
+}
+
+// A snapshot merged from several frames prefixes a subframe ref as `<frameId>:eN`
+// so an action routed later can land in the frame the element actually lives in.
+function splitFrameRef(ref) {
+  const match = /^(\d+):(.*)$/.exec(String(ref ?? ''));
+  if (!match) return { frameId: null, ref: ref ?? null };
+  return { frameId: Number(match[1]), ref: match[2] };
 }
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -88,9 +97,12 @@ const ACTION_METHODS = new Set([
 ]);
 
 async function callPage(tabId, method, params, attempt = 0) {
-  await inject(tabId);
+  const frame = splitFrameRef(params?.ref);
+  const frameTarget = frame.frameId === null ? {} : { frameIds: [frame.frameId] };
+  const effective = frame.frameId === null ? params : { ...params, ref: frame.ref };
+  await inject(tabId, frameTarget);
   const result = await api.scripting.executeScript({
-    target: { tabId },
+    target: { tabId, ...frameTarget },
     func: (name, input) => {
       const engine = globalThis.__fastMcp;
       if (!engine) throw Object.assign(new Error('Page engine unavailable'), { code: 'TAB_NOT_ACCESSIBLE' });
@@ -102,6 +114,7 @@ async function callPage(tabId, method, params, attempt = 0) {
       if (name === 'browser_press') return engine.press(input);
       if (name === 'browser_select') return engine.select(input, input.value);
       if (name === 'browser_fill_form') return engine.fillForm(input);
+      if (name === 'browser_act') return engine.act(input);
       if (name === 'browser_wait') {
         const milliseconds = Number(input.milliseconds);
         if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > 120000) {
@@ -123,7 +136,7 @@ async function callPage(tabId, method, params, attempt = 0) {
       }
       throw Object.assign(new Error(`Unsupported page method: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
     },
-    args: [method, params]
+    args: [method, effective]
   });
   const value = result?.[0]?.result;
   if (value === undefined || value === null) {
@@ -242,9 +255,123 @@ async function download(params) {
   return { downloadId: id, url };
 }
 
+// Frames are invisible to a top-frame DOM query, so this injects into every
+// frame at once and merges the per-frame snapshots, tagging each element with
+// its frameId and prefixing the ref (`<frameId>:eN`) so an action can be routed
+// back to the source frame. The function never throws inside a frame, because
+// one unreadable frame must not fail the whole snapshot.
+async function snapshotFrames(tabId, params) {
+  await inject(tabId, { allFrames: true });
+  const results = await api.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: input => {
+      try {
+        const engine = globalThis.__fastMcp;
+        if (!engine) return { ok: false, code: 'TAB_NOT_ACCESSIBLE' };
+        return { ok: true, snapshot: engine.snapshot(input) };
+      } catch (error) {
+        return { ok: false, code: error?.code ?? 'INVALID_ARGUMENT', message: error?.message ?? String(error) };
+      }
+    },
+    args: [{ ...params, frames: undefined, mode: undefined }]
+  });
+  const frames = [];
+  const elements = [];
+  for (const entry of results ?? []) {
+    const frameId = entry.frameId ?? 0;
+    const value = entry.result;
+    if (!value?.ok) {
+      frames.push({ frameId, ok: false, code: value?.code ?? 'TAB_NOT_ACCESSIBLE' });
+      continue;
+    }
+    const snapshot = value.snapshot;
+    frames.push({ frameId, ok: true, url: snapshot?.url ?? null, title: snapshot?.title ?? null, elementCount: snapshot?.elements?.length ?? 0 });
+    for (const item of snapshot?.elements ?? []) {
+      elements.push({ ...item, frameId, ref: frameId === 0 ? item.ref : `${frameId}:${item.ref}` });
+    }
+  }
+  const top = frames.find(frame => frame.frameId === 0) ?? frames[0] ?? {};
+  return { url: top.url ?? null, title: top.title ?? null, frames, elements };
+}
+
+function toBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}
+
+// Draw a Set-of-Mark overlay (numbered boxes over each interactive candidate) on
+// top of the viewport capture so a canvas/WebGL page still has addressable
+// targets. Coordinates are CSS px scaled to the capture's device pixels.
+async function drawMarks(dataUrl, marks, viewport) {
+  if (typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function' || typeof fetch !== 'function') return null;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const context = canvas.getContext('2d');
+    context.drawImage(bitmap, 0, 0);
+    const scaleX = viewport?.width ? bitmap.width / viewport.width : 1;
+    const scaleY = viewport?.height ? bitmap.height / viewport.height : 1;
+    context.lineWidth = 2;
+    context.font = '16px sans-serif';
+    context.textBaseline = 'top';
+    for (const mark of marks) {
+      const rect = mark.boundingBox;
+      if (!rect || !rect.width || !rect.height) continue;
+      const x = rect.x * scaleX;
+      const y = rect.y * scaleY;
+      const width = rect.width * scaleX;
+      const height = rect.height * scaleY;
+      if (x + width < 0 || y + height < 0 || x > bitmap.width || y > bitmap.height) continue;
+      context.strokeStyle = '#ff2d55';
+      context.strokeRect(x, y, width, height);
+      const label = String(mark.mark);
+      const labelWidth = context.measureText(label).width + 8;
+      context.fillStyle = '#ff2d55';
+      context.fillRect(x, y, labelWidth, 20);
+      context.fillStyle = '#ffffff';
+      context.fillText(label, x + 4, y + 2);
+    }
+    const output = await canvas.convertToBlob({ type: 'image/png' });
+    return `data:image/png;base64,${toBase64(new Uint8Array(await output.arrayBuffer()))}`;
+  } catch {
+    return null;
+  }
+}
+
+async function visualSnapshot(params) {
+  const tabId = Number(params.tabId);
+  const snapshot = await callPage(tabId, 'browser_snapshot', { ...params, mode: undefined, frames: undefined, boundingBox: true });
+  const tab = await api.tabs.get(tabId);
+  const dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  const metrics = await api.scripting.executeScript({
+    target: { tabId },
+    func: () => ({ width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio, scrollX: window.scrollX, scrollY: window.scrollY })
+  });
+  const viewport = metrics?.[0]?.result ?? { width: 0, height: 0, dpr: 1 };
+  const elements = (snapshot?.elements ?? []).filter(item => item.boundingBox);
+  const marks = elements.map((item, index) => ({ mark: index + 1, ref: item.ref, role: item.role, name: item.name, boundingBox: item.boundingBox }));
+  const overlay = await drawMarks(dataUrl, marks, viewport);
+  return {
+    revision: snapshot?.revision ?? null,
+    url: snapshot?.url ?? null,
+    title: snapshot?.title ?? null,
+    viewport,
+    marks,
+    overlayDrawn: Boolean(overlay),
+    dataUrl: overlay ?? dataUrl
+  };
+}
+
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_evaluate', 'browser_upload'];
+  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload'];
   if (method === 'browser_wait_for') return waitForPage(Number(params.tabId), params);
+  if (method === 'browser_snapshot' && params.frames === true) return snapshotFrames(Number(params.tabId), params);
+  if (method === 'browser_snapshot' && params.mode === 'visual') return visualSnapshot(params);
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
   if (method === 'browser_cookies') return cookies(params);

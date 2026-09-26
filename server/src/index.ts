@@ -31,7 +31,11 @@ const schemas = {
     selector,
     interactiveOnly: z.boolean().optional().describe('Return only interactive roles.'),
     maxDepth: z.number().int().min(1).max(50).optional().describe('Maximum ancestor depth from the document root.'),
-    limit: z.number().int().min(1).max(1000).optional().describe('Maximum number of elements to return.')
+    limit: z.number().int().min(1).max(1000).optional().describe('Maximum number of elements to return.'),
+    boundingBox: z.boolean().optional().describe('Include each element bounding box (set automatically in visual mode).'),
+    format: z.enum(['compact']).optional().describe('Return one compact line per element instead of a JSON array to save tokens.'),
+    frames: z.boolean().optional().describe('Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN.'),
+    mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.')
   }),
   browser_inventory: z.object({ tabId, boundingBox: z.boolean().optional() }),
   browser_click: pageInput,
@@ -53,6 +57,20 @@ const schemas = {
     submit: z.string().optional().describe('Optional ref of a button to click after every field is filled.'),
     submitSelector: z.string().optional().describe('Optional CSS selector of a button to click after every field is filled.')
   }),
+  browser_act: z.object({
+    tabId,
+    action: z.enum(['click', 'fill', 'type', 'press', 'select', 'hover']).describe('Action to perform on the target.'),
+    ref,
+    revision,
+    selector,
+    value: z.string().optional().describe('Value for fill, type, or select.'),
+    key: z.string().optional().describe('Key name for press.'),
+    waitAfter: z.boolean().optional().describe('Wait for the DOM to settle after acting (default true).'),
+    waitState: z.enum(['dom_stable', 'network_idle']).optional().describe('Settle condition to wait on (default dom_stable).'),
+    timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum settle wait in milliseconds (default 3000).'),
+    stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).')
+  }),
+  browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").') }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
   browser_wait_for: z.object({

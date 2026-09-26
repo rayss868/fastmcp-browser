@@ -38,6 +38,17 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
     return outcome.token;
   }
 
+  function serialize(value) {
+    let serialized;
+    try {
+      serialized = JSON.stringify(value ?? null);
+    } catch (error) {
+      throw evaluationError(`Result is not serializable: ${error?.message ?? String(error)}`, 'ACTION_TIMEOUT');
+    }
+    if (serialized.length > maxResultBytes) throw evaluationError('Result exceeds 1 MB.', 'ACTION_TIMEOUT');
+    return JSON.parse(serialized);
+  }
+
   return {
     async evaluate(params = {}) {
       const tabId = Number(params?.tabId);
@@ -73,14 +84,63 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
         throw evaluationError(`Evaluation failed: ${error?.message ?? String(error)}`);
       }
 
-      let serialized;
+      return serialize(results?.[0]?.result ?? null);
+    },
+
+    async inspect(params = {}) {
+      const tabId = Number(params?.tabId);
+      if (!Number.isInteger(tabId)) throw evaluationError('tabId is required for browser_inspect.');
+      const ref = typeof params?.ref === 'string' && params.ref ? params.ref : null;
+      const token = ref ? await refToken(tabId, ref, params?.revision) : null;
+
+      let results;
       try {
-        serialized = JSON.stringify(results?.[0]?.result ?? null);
+        results = await scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: (attr, tokenArg, bindElement, pathArg) => {
+            const element = bindElement && tokenArg ? document.querySelector(`[${attr}="${tokenArg}"]`) : null;
+            try {
+              if (!element) return { ok: false, error: 'No element bound; pass a ref.' };
+              const summary = { ok: true, tag: element.tagName ? element.tagName.toLowerCase() : null };
+              const keys = Object.keys(element);
+              const fiberKey = keys.find(key => key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$'));
+              const propsKey = keys.find(key => key.startsWith('__reactProps$'));
+              if (fiberKey) {
+                summary.framework = 'react';
+                const components = [];
+                let node = element[fiberKey];
+                for (let depth = 0; node && depth < 30; depth += 1) {
+                  const type = node.type;
+                  const label = typeof type === 'function'
+                    ? (type.displayName || type.name)
+                    : (type && typeof type === 'object' ? (type.displayName || type.name) : null);
+                  if (label) components.push(label);
+                  node = node.return;
+                }
+                summary.components = [...new Set(components)].slice(0, 10);
+              }
+              if (propsKey) summary.props = element[propsKey];
+              if (keys.some(key => key.startsWith('__vueParentComponent'))) summary.framework = 'vue';
+              if (keys.some(key => key.startsWith('__ngContext__'))) summary.framework = 'angular';
+              if (pathArg) {
+                let value = element;
+                for (const segment of String(pathArg).split('.').filter(Boolean)) {
+                  value = value == null ? undefined : value[segment];
+                }
+                summary.value = value;
+              }
+              return summary;
+            } finally {
+              if (element) element.removeAttribute(attr);
+            }
+          },
+          args: [attribute, token, Boolean(ref), params?.path ?? null]
+        });
       } catch (error) {
-        throw evaluationError(`Evaluation result is not serializable: ${error?.message ?? String(error)}`, 'ACTION_TIMEOUT');
+        throw evaluationError(`Inspection failed: ${error?.message ?? String(error)}`);
       }
-      if (serialized.length > maxResultBytes) throw evaluationError('Evaluation result exceeds 1 MB.', 'ACTION_TIMEOUT');
-      return JSON.parse(serialized);
+      return serialize(results?.[0]?.result ?? null);
     }
   };
 }

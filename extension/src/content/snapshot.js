@@ -78,8 +78,26 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
         item.checked = element.checked;
         item.value = element.type === 'password' ? '[REDACTED]' : element.value;
       } else if (isButton) item.disabled = element.disabled;
+      if (options.boundingBox) item.boundingBox = boundingBox(element);
       elements.push(item);
       if (limit > 0 && elements.length >= limit) break;
+    }
+    if (options.format === 'compact') {
+      // One line per element carries the same data with far fewer tokens than a
+      // JSON object array; the model can read `role "name" [ref=eN]` directly.
+      const lines = elements.map(item => {
+        const pieces = [`- ${item.role} "${item.name}" [ref=${item.ref}]`];
+        if (item.value !== undefined && item.value !== '') pieces.push(`value="${item.value}"`);
+        return pieces.join(' ');
+      });
+      return bounded({
+        tabId: null,
+        url: windowRef.location.href,
+        title: documentRef.title,
+        revision: refs.revision,
+        elementCount: elements.length,
+        text: lines.join('\n')
+      });
     }
     return bounded({
       tabId: null,

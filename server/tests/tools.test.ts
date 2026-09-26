@@ -7,7 +7,7 @@ import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/too
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 30);
+  assert.equal(TOOL_NAMES.length, 32);
 });
 
 test('browser_fill_form batches fields and an optional submit in one call', () => {
@@ -83,7 +83,7 @@ test('documented tools expose described input schema properties', () => {
 
   const snapshot = byName.get('browser_snapshot')!;
   const snapshotProps = snapshot.inputSchema.properties as Record<string, { description?: string }>;
-  for (const field of ['scope', 'selector', 'interactiveOnly', 'maxDepth', 'limit']) {
+  for (const field of ['scope', 'selector', 'interactiveOnly', 'maxDepth', 'limit', 'boundingBox', 'format', 'frames', 'mode']) {
     assert.ok(snapshotProps[field]?.description, `browser_snapshot.${field} missing description`);
   }
 
@@ -98,6 +98,25 @@ test('documented tools expose described input schema properties', () => {
   const evaluateProps = evaluate.inputSchema.properties as Record<string, { description?: string }>;
   assert.match(String(evaluateProps.expression?.description), /10000|expression/i);
   assert.deepEqual(evaluate.inputSchema.required, ['expression']);
+});
+
+test('registry documents the composite act and framework inspect tools', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const act = byName.get('browser_act');
+  assert.ok(act, 'browser_act missing from the registry');
+  const actProps = act.inputSchema.properties as Record<string, { description?: string; enum?: string[] }>;
+  for (const field of ['action', 'ref', 'selector', 'value', 'key', 'waitAfter', 'waitState', 'timeoutMs', 'stableMs']) {
+    assert.ok(actProps[field]?.description, `browser_act.${field} missing description`);
+  }
+  assert.deepEqual(act.inputSchema.required, ['action']);
+  assert.ok(actProps.action?.enum?.includes('click'), 'browser_act.action missing the click option');
+
+  const inspect = byName.get('browser_inspect');
+  assert.ok(inspect, 'browser_inspect missing from the registry');
+  const inspectProps = inspect.inputSchema.properties as Record<string, { description?: string }>;
+  assert.ok(inspectProps.ref?.description, 'browser_inspect.ref missing description');
+  assert.ok(inspectProps.path?.description, 'browser_inspect.path missing description');
+  assert.deepEqual(inspect.inputSchema.required, []);
 });
 
 test('callBrowserTool forwards method and params', async () => {

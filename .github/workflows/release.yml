@@ -31,7 +31,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            WebExtension builds of FastMCP Browser (30 MCP tools, including `browser_upload`, `browser_network`, `browser_fill_form`, and `browser_wait_for`).
+            WebExtension builds of FastMCP Browser (32 MCP tools, including `browser_act`, `browser_inspect`, `browser_upload`, `browser_network`, `browser_fill_form`, and `browser_wait_for`).
+
+            `browser_snapshot` gained `format:"compact"` (one line per element, ~60% fewer tokens), `frames:true` (merge readable iframes), and `mode:"visual"` (screenshot with numbered Set-of-Mark boxes for canvas/WebGL pages). Target selectors now accept `text=Label`, `xpath=//…`, and `host >>> inner` to cross open shadow roots.
 
             The Firefox `.xpi` has `manifest.json` at the archive root. It is unsigned; standard Firefox release builds require a Mozilla-signed add-on for permanent installation. LibreWolf and Firefox Developer Edition/Nightly may allow unsigned add-ons when signature enforcement is disabled.
 

@@ -1,5 +1,5 @@
 import { createReferenceStore, boundingBox } from './refs.js';
-import { createDomSemantics } from './semantics.js';
+import { createDomSemantics, deepQueryAll, sanitizeText } from './semantics.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
 import { decodeFileEntries } from './files.js';
@@ -32,6 +32,8 @@ const pointerController = createPointerController({
   refs
 });
 
+const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
 function resetRefs() {
   refs.reset();
 }
@@ -59,9 +61,52 @@ function resolve(ref, revision) {
   return element;
 }
 
+function queryShadowChain(selector) {
+  const parts = selector.split('>>>').map(part => part.trim()).filter(Boolean);
+  let roots = [document];
+  let matched = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    matched = [];
+    for (const root of roots) matched.push(...root.querySelectorAll(parts[index]));
+    if (index === parts.length - 1) break;
+    roots = matched.map(element => element.shadowRoot).filter(Boolean);
+  }
+  return [...new Set(matched)];
+}
+
+function findByText(text) {
+  const needle = String(text).trim().toLowerCase();
+  if (!needle) return null;
+  const pool = semantics.candidates();
+  return pool.find(element => semantics.name(element).toLowerCase() === needle)
+    ?? pool.find(element => semantics.name(element).toLowerCase().includes(needle))
+    ?? null;
+}
+
+function findByXPath(expression) {
+  if (typeof document.evaluate !== 'function') return null;
+  const result = document.evaluate(expression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+  return result.singleNodeValue ?? null;
+}
+
+// Selector syntax beyond plain CSS: `text=Label`, `xpath=//div`, and `a >>> b`
+// to cross open shadow roots. Plain CSS still resolves first, then falls back to
+// a shadow-piercing deep query so a rerender cannot make it stale.
+function resolveSelector(selector) {
+  const value = String(selector).trim();
+  if (!value) return null;
+  if (value.startsWith('text=')) return findByText(value.slice(5));
+  if (value.startsWith('xpath=')) return findByXPath(value.slice(6).trim());
+  if (value.startsWith('//') || value.startsWith('(//')) return findByXPath(value);
+  if (value.includes('>>>')) return queryShadowChain(value)[0] ?? null;
+  const direct = document.querySelector(value);
+  if (direct) return direct;
+  return deepQueryAll(document, value)[0] ?? null;
+}
+
 function targetOf(input = {}) {
   if (typeof input.selector === 'string' && input.selector) {
-    const element = document.querySelector(input.selector);
+    const element = resolveSelector(input.selector);
     if (!element) throw Object.assign(new Error(`No element matches selector: ${input.selector}`), { code: 'ELEMENT_NOT_FOUND', retryable: true });
     return element;
   }
@@ -135,7 +180,35 @@ function inventory(input = {}) {
   return result;
 }
 
-function applySelect(element, value) {
+function setValue(element, text) {
+  element.focus?.();
+  if ('value' in element) {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set;
+    setter?.call(element, text);
+  } else if (element.isContentEditable || 'textContent' in element) {
+    element.textContent = text;
+  }
+  element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// A custom combobox renders its options into a portal that appears a tick after
+// the control is clicked, sometimes inside a shadow root. Poll for it instead of
+// reading the DOM once.
+async function findOption(value) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const options = deepQueryAll(document, '[role="option"],[role="menuitem"]').filter(option => option.isConnected);
+    const match = options.find(option => {
+      const text = (option.textContent ?? '').replace(/\s+/g, ' ').trim();
+      return text === value || option.getAttribute?.('data-value') === value || option.getAttribute?.('value') === value;
+    });
+    if (match) return match;
+    await delay(50);
+  }
+  return null;
+}
+
+async function applySelect(element, value) {
   if (element instanceof HTMLSelectElement) {
     const option = [...element.options].find(item => item.value === value || item.textContent?.trim() === value);
     if (!option) throw Object.assign(new Error('Option not found.'), { code: 'ELEMENT_NOT_FOUND', retryable: false });
@@ -148,25 +221,21 @@ function applySelect(element, value) {
   const isCombobox = role === 'combobox' || role === 'listbox' || element.getAttribute?.('aria-haspopup') === 'listbox' || element.getAttribute?.('aria-haspopup') === 'true';
   if (!isCombobox) throw Object.assign(new Error('Element is not a select or ARIA combobox.'), { code: 'ELEMENT_NOT_INTERACTIVE' });
   if (element.getAttribute?.('aria-expanded') !== 'true') element.click();
-  const options = [...document.querySelectorAll('[role="option"],[role="menuitem"]')].filter(option => option.isConnected);
-  const match = options.find(option => {
-    const text = (option.textContent ?? '').replace(/\s+/g, ' ').trim();
-    return text === value || option.getAttribute?.('data-value') === value || option.getAttribute?.('value') === value;
-  });
+  const match = await findOption(value);
   if (!match) throw Object.assign(new Error(`No open option matching "${value}".`), { code: 'ELEMENT_NOT_FOUND', retryable: true });
   match.click();
   element.dispatchEvent(new Event('input', { bubbles: true }));
   element.dispatchEvent(new Event('change', { bubbles: true }));
-  return (match.textContent ?? value).replace(/\s+/g, ' ').trim();
+  return sanitizeText(match.textContent ?? value);
 }
 
 function actionClick(input = {}) { const element = targetOf(input); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); element.click(); return finish({ changed: true, url: location.href }); }
-function fill(input = {}, value) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); element.focus(); if ('value' in element) { const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set; setter?.call(element, value); } else element.textContent = value; element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); element.dispatchEvent(new Event('change', { bubbles: true })); return finish({ changed: true }); }
+function fill(input = {}, value) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); setValue(element, value); return finish({ changed: true }); }
 function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); return finish({ changed: true }); }
-function select(input = {}, value) { const element = targetOf(input); return finish({ changed: true, value: applySelect(element, String(value)) }); }
+async function select(input = {}, value) { const element = targetOf(input); return finish({ changed: true, value: await applySelect(element, String(value)) }); }
 function fieldTarget(field, revision) {
   if (typeof field?.selector === 'string' && field.selector) {
-    const element = document.querySelector(field.selector);
+    const element = resolveSelector(field.selector);
     if (!element) throw Object.assign(new Error(`No element matches selector: ${field.selector}`), { code: 'ELEMENT_NOT_FOUND', retryable: true });
     return element;
   }
@@ -175,7 +244,7 @@ function fieldTarget(field, revision) {
   return element;
 }
 
-function fillForm(input = {}) {
+async function fillForm(input = {}) {
   const fields = Array.isArray(input.fields) ? input.fields : [];
   const results = [];
   for (const field of fields) {
@@ -185,7 +254,7 @@ function fillForm(input = {}) {
       const element = fieldTarget(field, input.revision);
       const value = field?.value;
       if (element instanceof HTMLSelectElement || element.getAttribute?.('role') === 'combobox' || element.getAttribute?.('role') === 'listbox') {
-        applySelect(element, String(value));
+        await applySelect(element, String(value));
       } else if (element instanceof HTMLInputElement && (element.type === 'checkbox' || element.type === 'radio')) {
         const checked = typeof value === 'boolean' ? value : !(value === 'false' || value === '0' || value === '' || value == null);
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')?.set;
@@ -193,16 +262,7 @@ function fillForm(input = {}) {
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        const text = value == null ? '' : String(value);
-        element.focus();
-        if ('value' in element) {
-          const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set;
-          setter?.call(element, text);
-        } else {
-          element.textContent = text;
-        }
-        element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
+        setValue(element, value == null ? '' : String(value));
       }
       results.push({ ...target, ok: true });
     } catch (error) {
@@ -214,7 +274,7 @@ function fillForm(input = {}) {
     try {
       const element = input.submit
         ? resolve(input.submit, input.revision)
-        : document.querySelector(input.submitSelector);
+        : resolveSelector(input.submitSelector);
       if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
       element.click();
       submitted = true;
@@ -250,7 +310,7 @@ function waitFor(input = {}) {
       if (settled) return;
       if (Date.now() >= deadline) return finishWait(false);
       if ((condition === 'attached' || condition === 'visible') && input.selector) {
-        const element = document.querySelector(input.selector);
+        const element = resolveSelector(input.selector);
         if (element && (condition === 'attached' || semantics.visible(element))) return finishWait(true);
       } else if (condition === 'text' && input.text) {
         if ((document.body?.innerText ?? '').includes(String(input.text))) return finishWait(true);
@@ -266,6 +326,67 @@ function waitFor(input = {}) {
     };
     check();
   });
+}
+
+function resolveTarget(target) {
+  if (target.ref) return locate(target.ref, target.revision);
+  if (target.selector) {
+    const element = resolveSelector(target.selector);
+    if (!element) throw Object.assign(new Error(`No element matches selector: ${target.selector}`), { code: 'ELEMENT_NOT_FOUND', retryable: true });
+    return { element, recovered: false };
+  }
+  throw Object.assign(new Error('Provide target ref or selector.'), { code: 'INVALID_ARGUMENT' });
+}
+
+// One primitive that finds the target, acts, re-resolves when the node was
+// replaced, waits for the DOM to settle, then reports the new ref and a diff so
+// the caller usually does not need a fresh snapshot.
+async function act(input = {}) {
+  const action = String(input.action ?? 'click');
+  const target = {
+    ref: input.target?.ref ?? input.ref ?? null,
+    selector: input.target?.selector ?? input.selector ?? null,
+    revision: input.target?.revision ?? input.revision
+  };
+  const before = discovery.catalog({ limit: 400 });
+  const { element, recovered } = resolveTarget(target);
+  if (recovered) state.recovered = true;
+
+  let detail = null;
+  if (action === 'click') {
+    if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
+    element.click();
+  } else if (action === 'fill' || action === 'type') {
+    setValue(element, input.value == null ? '' : String(input.value));
+  } else if (action === 'press') {
+    if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: input.key, bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent('keyup', { key: input.key, bubbles: true }));
+  } else if (action === 'select') {
+    detail = await applySelect(element, String(input.value ?? ''));
+  } else if (action === 'hover') {
+    element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+  } else {
+    throw Object.assign(new Error(`Unsupported action: ${action}`), { code: 'INVALID_ARGUMENT' });
+  }
+
+  let settled = null;
+  if (input.waitAfter !== false) {
+    settled = await waitFor({ state: input.waitState ?? 'dom_stable', timeoutMs: input.timeoutMs ?? 3000, stableMs: input.stableMs ?? 150 });
+  }
+
+  const after = discovery.catalog({ limit: 400 });
+  state.lastCatalog = after;
+  const diff = computeDiff(before, after);
+  const changed = diff.added.length + diff.removed.length + diff.changed.length > 0;
+  const nextRef = element.isConnected && typeof element.tagName === 'string'
+    ? refs.refFor(element, 'e', { role: semantics.role(element), name: semantics.name(element) })
+    : null;
+  const result = { changed, action, revision: state.revision, ref: nextRef, diff };
+  if (detail !== null) result.value = detail;
+  if (settled) result.settled = settled.satisfied;
+  if (state.recovered) { result.recovered = true; state.recovered = false; }
+  return result;
 }
 
 function screenshotTarget(input = {}) { const element = input.ref || input.selector ? targetOf(input) : document.documentElement; return { boundingBox: box(element), url: location.href, title: document.title }; }
@@ -297,7 +418,7 @@ function network(input = {}) {
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, screenshotTarget, scroll, pointer, upload, network, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
