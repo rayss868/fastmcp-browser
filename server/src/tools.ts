@@ -58,14 +58,14 @@ export const TOOL_NAMES = [
 ] as const;
 
 export const TOOL_DOCS: Record<string, string> = {
-  browser_connect: 'Open the WebSocket bridge to the extension and verify the handshake; returns bridge connectivity and capabilities.',
+  browser_connect: 'Open the WebSocket bridge to the extension and verify the handshake; returns bridge connectivity and capabilities. Keep payloads light during a session: prefer browser_inventory with a narrow filter over browser_snapshot, use a small limit on browser_network, and have browser_evaluate return only the few values you actually need.',
   browser_status: 'Report bridge status, authorized tab count, active session group, browser identity, and supported capabilities.',
-  browser_tabs: 'List browser tabs as compact entries (id, title, url, active, groupId, windowId); also authorizes those tabs for this session. Pass full:true for raw tab data.',
+  browser_tabs: 'List browser tabs as compact entries (id, title, url, active, groupId, windowId); also authorizes those tabs for this session. Avoid full:true unless raw tab fields are required — it returns a much larger payload.',
   browser_open: 'Open a URL in the live Automation tab by default. Set newTab:true to open a separate background tab; all automation tabs join the session group.',
   browser_close: 'Close the given tab and revoke its session authorization so it cannot be targeted again.',
   browser_focus: 'Activate the given tab so subsequent page actions target it visibly.',
-  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets.',
-  browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter.',
+  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets. This can be large on busy pages — prefer browser_inventory with filter:"interactive" (or "viewport") for simple locate-and-click tasks, and only use snapshot when you need the full element list.',
+  browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter. Recommended default: pass filter:"interactive" (or "viewport") to keep the response small; filter:"all" also includes every text candidate and can be very large.',
   browser_click: 'Click the element identified by ref from the latest snapshot; pass revision to reject stale refs.',
   browser_pointer_move: 'Move the pointer to page coordinates in the active tab for hover-driven UI.',
   browser_pointer_click: 'Click at page coordinates using the virtual pointer in the given tab.',
@@ -79,11 +79,11 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle.',
   browser_screenshot: 'Capture a PNG dataUrl of the visible viewport by default. Set fullPage:true to scroll the page and stitch viewport captures into one full-page PNG; the active tab and original scroll position are restored afterward.',
   browser_upload: 'Read local files from disk (paths) and attach them to the file input identified by ref; files are read on the MCP host and set via DataTransfer, no OS dialog.',
-  browser_network: 'Observe live requests for the given tab, including request and response headers plus available upload-body data. Firefox also captures up to 64 KB of text response bodies per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted. Upload data is capped at 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified.',
+  browser_network: 'Observe live requests for the given tab, including request and response headers plus available upload-body data. Firefox also captures up to 64 KB of text response bodies per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted. Upload data is capped at 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified. Each record is heavy, so pass a small limit (5-10) and only raise it when you really need more records; the default is 50.',
   browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
   browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
-  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected.',
+  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected. Return only the small set of values you need (pick fields, count, boolean) — avoid dumping large DOM subtrees or whole documents; results can reach 1 MB and will slow the session.',
   browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, and which instance the bridge currently routes session commands to.',
   browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
   browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.'

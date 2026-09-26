@@ -108,7 +108,15 @@ export function createSessionManager({
       const operation = opening.then(async () => {
         const s = await ensure();
         const openTabs = newTab ? [] : await api.tabs.query({});
-        const reusableTabId = newTab ? undefined : s.tabIds.find(id => openTabs.some(tab => tab.id === id));
+        const managedTabSet = new Set(s.tabIds);
+        const inGroup = new Set(
+          supportsNativeGroups() && s.groupId !== null
+            ? openTabs.filter(tab => tab.groupId === s.groupId).map(tab => tab.id)
+            : openTabs.map(tab => tab.id)
+        );
+        const reusableTabId = newTab
+          ? undefined
+          : s.tabIds.find(id => managedTabSet.has(id) && inGroup.has(id));
         const tab = reusableTabId === undefined
           ? await api.tabs.create({ url, active: false })
           : await api.tabs.update(reusableTabId, { url });
@@ -134,7 +142,14 @@ export function createSessionManager({
       try {
         const openTabs = await api.tabs.query({});
         const alive = new Set(openTabs.map(tab => tab.id));
-        s.tabIds = s.tabIds.filter(id => alive.has(id));
+        if (supportsNativeGroups() && s.groupId !== null) {
+          const inGroup = new Set(
+            openTabs.filter(tab => tab.groupId === s.groupId).map(tab => tab.id)
+          );
+          s.tabIds = s.tabIds.filter(id => alive.has(id) && inGroup.has(id));
+        } else {
+          s.tabIds = s.tabIds.filter(id => alive.has(id));
+        }
       } catch {
         // keep last known membership when the browser cannot be queried
       }

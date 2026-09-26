@@ -43,7 +43,12 @@ function createNativeApi(storage) {
         for (const tabId of tabIds) groups.get(groupId).add(tabId);
         return groupId;
       },
-      query: async () => [...alive].map(id => ({ id }))
+      query: async () => [...alive].map(id => {
+        for (const [gid, members] of groups) {
+          if (members.has(id)) return { id, groupId: gid };
+        }
+        return { id };
+      })
     },
     tabGroups: {
       update: async (groupId, properties) => {
