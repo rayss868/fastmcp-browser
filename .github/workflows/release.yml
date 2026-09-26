@@ -20,20 +20,25 @@ jobs:
         working-directory: extension
         env:
           VERSION: ${{ github.ref_name }}
-      - name: Package zips
+      - name: Package archives
         run: |
           cd extension/dist
           zip -r fastmcp-browser-extension-chromium.zip chromium
           zip -r fastmcp-browser-extension-firefox.zip firefox
-      - name: Create GitHub Release with zips
+          (cd firefox && zip -r ../fastmcp-browser-extension-firefox.xpi .)
+          python -c "import zipfile; z = zipfile.ZipFile('fastmcp-browser-extension-firefox.xpi'); assert z.testzip() is None and 'manifest.json' in z.namelist()"
+      - name: Create GitHub Release with extension archives
         uses: softprops/action-gh-release@v2
         with:
           body: |
             WebExtension builds of FastMCP Browser (29 MCP tools, including `browser_upload`, `browser_network`, and `browser_fill_form`).
 
-            Unzip the archive, then load it unpacked:
+            The Firefox `.xpi` has `manifest.json` at the archive root. It is unsigned; standard Firefox release builds require a Mozilla-signed add-on for permanent installation. LibreWolf and Firefox Developer Edition/Nightly may allow unsigned add-ons when signature enforcement is disabled.
+
+            Alternatively, unzip an archive and load it unpacked:
             - **Chromium** (`fastmcp-browser-extension-chromium.zip`) → `chrome://extensions` → Load unpacked → the `chromium` folder
             - **Firefox** (`fastmcp-browser-extension-firefox.zip`) → `about:debugging` → Load Temporary Add-on → `firefox/manifest.json`
           files: |
             extension/dist/fastmcp-browser-extension-chromium.zip
             extension/dist/fastmcp-browser-extension-firefox.zip
+            extension/dist/fastmcp-browser-extension-firefox.xpi

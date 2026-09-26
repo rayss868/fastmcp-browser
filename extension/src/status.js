@@ -14,12 +14,27 @@ function send(method, params = {}) {
   return api.runtime.sendMessage({ method, params });
 }
 
+function formatBrowserDetail(detail) {
+  if (detail == null) return 'unknown';
+  if (typeof detail === 'string') return detail;
+  if (typeof detail === 'object') {
+    const name = detail.name ?? detail.brand ?? detail.vendor ?? null;
+    const version = detail.version ?? detail.buildID ?? null;
+    if (name && version) return `${name} ${version}`;
+    if (name) return String(name);
+    if (version) return String(version);
+    return 'unknown';
+  }
+  return String(detail);
+}
+
 function render(status) {
   const session = status.session ?? {};
+  const detail = formatBrowserDetail(status.browser);
   fields.connection.textContent = status.connected ? 'Connected' : 'Disconnected';
   fields.browser.textContent = session.browser?.brand
-    ? `${session.browser.brand} (${status.browser ?? 'unknown'})`
-    : status.browser ?? 'Unknown';
+    ? `${session.browser.brand} (${detail})`
+    : detail === 'unknown' ? 'Unknown' : detail;
   fields.protocol.textContent = String(status.protocolVersion ?? 1);
   fields.tabs.textContent = String(status.authorizedTabs ?? 0);
   fields.session.textContent = session.sessionId ?? '-';
