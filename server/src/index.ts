@@ -14,7 +14,7 @@ const ref = z.string().optional().describe('Element ref returned by browser_snap
 const selector = z.string().optional().describe('CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale.');
 const pageInput = z.object({ tabId, revision, ref, selector }).passthrough();
 
-const schemas = {
+const schemas: Record<string, z.ZodObject<any, any, any>> = {
   browser_connect: z.object({}),
   browser_status: z.object({}),
   browser_tabs: z.object({ full: z.boolean().optional().describe('Return raw tab objects instead of the compact summary.') }),
@@ -92,6 +92,16 @@ const schemas = {
   browser_use_instance: z.object({ id: z.string().describe('Instance id returned by browser_instances.') }),
   browser_disconnect: z.object({})
 };
+
+const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);
+const TARGET_ZOD = {
+  browser: z.string().optional().describe('Target browser brand or family to route this call, for example Chrome, Edge, Brave, chromium, or firefox. Pass this together with profile when more than one browser profile is connected; call browser_instances to see what is available.'),
+  profile: z.string().optional().describe('Target connected extension instance by the profile id or label reported by browser_instances. Pass this together with browser when more than one browser profile is connected.')
+};
+for (const name of TOOL_NAMES) {
+  if (ROUTING_EXEMPT.has(name)) continue;
+  schemas[name] = schemas[name].extend(TARGET_ZOD);
+}
 
 for (const name of TOOL_NAMES) {
   const inputSchema = schemas[name];

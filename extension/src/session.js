@@ -147,6 +147,8 @@ export function createSessionManager({
             openTabs.filter(tab => tab.groupId === s.groupId).map(tab => tab.id)
           );
           s.tabIds = s.tabIds.filter(id => alive.has(id) && inGroup.has(id));
+          // Chrome drops a group once its last tab closes; forget the stale id
+          if (inGroup.size === 0) s.groupId = null;
         } else {
           s.tabIds = s.tabIds.filter(id => alive.has(id));
         }
@@ -171,21 +173,45 @@ export function createSessionManager({
   }
 }
 
-export async function bridgeIdentity(api) {
+function browserVersion(userAgent = '') {
+  const match = /(?:Firefox|Edg|OPR|Opera|Vivaldi|Chrome|Chromium)\/([\d.]+)/.exec(String(userAgent));
+  return match ? match[1] : undefined;
+}
+
+export async function bridgeIdentity(api, browser = { family: 'chromium', brand: 'Unknown' }) {
   const area = api.storage.local;
-  const stored = await area.get(['fastmcpInstance']);
+  const stored = await area.get(['fastmcpInstance', 'fastmcpInstanceLabel']);
   let instanceId = stored.fastmcpInstance;
   if (!instanceId) {
     instanceId = `i-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     await area.set({ fastmcpInstance: instanceId });
   }
+  const label = typeof stored.fastmcpInstanceLabel === 'string' && stored.fastmcpInstanceLabel
+    ? stored.fastmcpInstanceLabel
+    : `${browser.brand}-${instanceId.slice(-4)}`;
   let hint;
+  let tabs = 0;
+  let windows = 0;
   try {
-    const tabs = await api.tabs.query({});
-    const active = tabs.find(tab => tab.active) ?? tabs[0];
+    const open = await api.tabs.query({});
+    tabs = open.length;
+    windows = new Set(open.map(tab => tab.windowId)).size;
+    const active = open.find(tab => tab.active) ?? open[0];
     if (active) hint = { title: String(active.title ?? '').slice(0, 100), url: String(active.url ?? '').slice(0, 200) };
   } catch {
     // hint is optional; some browsers restrict tabs.query at handshake time
   }
-  return { instanceId, hint };
+  const nav = globalThis.navigator ?? {};
+  const identity = {
+    instanceId,
+    profile: instanceId,
+    label,
+    browser: { brand: browser.brand, family: browser.family, version: browserVersion(typeof nav.userAgent === 'string' ? nav.userAgent : '') },
+    platform: typeof nav.platform === 'string' ? nav.platform : undefined,
+    language: typeof nav.language === 'string' ? nav.language : undefined,
+    tabs,
+    windows,
+    activeTab: hint
+  };
+  return { instanceId, hint, identity };
 }

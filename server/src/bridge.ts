@@ -7,6 +7,14 @@ export type InstanceInfo = {
   hint?: unknown;
   connectedAt: number;
   active: boolean;
+  label?: string;
+  profile?: string;
+  family?: string;
+  version?: string;
+  platform?: string;
+  language?: string;
+  tabs?: number;
+  windows?: number;
 };
 
 export type BrowserBridge = {
@@ -18,7 +26,22 @@ export type BrowserBridge = {
   token: string;
 };
 
-type Connection = { socket: WebSocket; id: string; browser?: string; hint?: unknown; connectedAt: number };
+type Connection = {
+  socket: WebSocket;
+  id: string;
+  browser?: string;
+  hint?: unknown;
+  connectedAt: number;
+  label?: string;
+  family?: string;
+  version?: string;
+  platform?: string;
+  language?: string;
+  tabs?: number;
+  windows?: number;
+};
+
+export type RouteSelector = { instance?: string; browser?: string; profile?: string };
 
 export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_TOKEN): BrowserBridge {
   const token = configuredToken ?? 'fastmcp-local-dev';
@@ -32,6 +55,7 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
   let connections: Connection[] = [];
   let activeSocket: WebSocket | undefined;
   let activeId: string | undefined;
+  let pinnedId: string | undefined;
   let anonymousSeq = 0;
   let closed = false;
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
@@ -39,7 +63,64 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
   let counter = 0;
 
   function snapshot(): InstanceInfo[] {
-    return connections.map(connection => ({ id: connection.id, browser: connection.browser, hint: connection.hint, connectedAt: connection.connectedAt, active: connection.socket === activeSocket }));
+    return connections.map(connection => ({
+      id: connection.id,
+      browser: connection.browser,
+      hint: connection.hint,
+      connectedAt: connection.connectedAt,
+      active: connection.socket === activeSocket,
+      label: connection.label,
+      profile: connection.id,
+      family: connection.family,
+      version: connection.version,
+      platform: connection.platform,
+      language: connection.language,
+      tabs: connection.tabs,
+      windows: connection.windows
+    }));
+  }
+
+  function describe(connection: Connection): string {
+    return connection.label ?? connection.id;
+  }
+
+  function splitSelector(params: Record<string, unknown>): { selector?: RouteSelector; rest: Record<string, unknown> } {
+    const selector: RouteSelector = {};
+    let found = false;
+    for (const key of ['instance', 'browser', 'profile'] as const) {
+      const value = params[key];
+      if (typeof value === 'string' && value) {
+        selector[key] = value;
+        found = true;
+      }
+    }
+    if (!found) return { rest: params };
+    const rest = { ...params };
+    for (const key of ['instance', 'browser', 'profile'] as const) delete rest[key];
+    return { selector, rest };
+  }
+
+  function resolveSocket(selector?: RouteSelector): WebSocket | undefined {
+    if (!connections.length) return undefined;
+    const hasSelector = !!selector && (selector.instance !== undefined || selector.browser !== undefined || selector.profile !== undefined);
+    if (!hasSelector) {
+      if (connections.length === 1) return connections[0].socket;
+      const pinned = pinnedId ? connections.find(connection => connection.id === pinnedId) : undefined;
+      if (pinned) return pinned.socket;
+      throw Object.assign(new Error(`Multiple browser instances are connected (${connections.map(describe).join(', ')}). Pass browser and profile to pick one, or call browser_use_instance.`), { code: 'INSTANCE_REQUIRED', retryable: false });
+    }
+    let matches = connections;
+    if (selector && selector.instance !== undefined) matches = matches.filter(connection => connection.id === selector.instance);
+    if (selector && selector.browser !== undefined) {
+      const want = selector.browser.toLowerCase();
+      matches = matches.filter(connection => String(connection.browser ?? '').toLowerCase() === want || String(connection.family ?? '').toLowerCase() === want);
+    }
+    if (selector && selector.profile !== undefined) {
+      matches = matches.filter(connection => connection.id === selector.profile || connection.label === selector.profile);
+    }
+    if (!matches.length) throw Object.assign(new Error(`No connected browser instance matches ${JSON.stringify(selector)}. Call browser_instances to list them.`), { code: 'INSTANCE_NOT_FOUND', retryable: false });
+    if (matches.length > 1) throw Object.assign(new Error(`Multiple browser instances match ${JSON.stringify(selector)} (${matches.map(describe).join(', ')}). Add profile or instance.`), { code: 'INSTANCE_AMBIGUOUS', retryable: false });
+    return matches[0].socket;
   }
 
   function broadcastInstances() {
@@ -65,12 +146,21 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
             return;
           }
           const id = typeof message.instanceId === 'string' && message.instanceId ? message.instanceId : `instance-${++anonymousSeq}`;
+          const identity = typeof message.identity === 'object' && message.identity !== null ? message.identity as Record<string, unknown> : undefined;
+          const browserInfo = identity && typeof identity.browser === 'object' && identity.browser !== null ? identity.browser as Record<string, unknown> : undefined;
           connections.push({
             socket: candidate,
             id,
-            browser: typeof message.browser === 'string' ? message.browser : undefined,
-            hint: typeof message.hint === 'object' && message.hint !== null ? message.hint : undefined,
-            connectedAt: Date.now()
+            browser: typeof browserInfo?.brand === 'string' ? browserInfo.brand : (typeof message.browser === 'string' ? message.browser : undefined),
+            hint: identity && identity.activeTab !== undefined ? identity.activeTab : (typeof message.hint === 'object' && message.hint !== null ? message.hint : undefined),
+            connectedAt: Date.now(),
+            label: identity && typeof identity.label === 'string' ? identity.label : undefined,
+            family: typeof browserInfo?.family === 'string' ? browserInfo.family : undefined,
+            version: typeof browserInfo?.version === 'string' ? browserInfo.version : undefined,
+            platform: identity && typeof identity.platform === 'string' ? identity.platform : undefined,
+            language: identity && typeof identity.language === 'string' ? identity.language : undefined,
+            tabs: identity && typeof identity.tabs === 'number' ? identity.tabs : undefined,
+            windows: identity && typeof identity.windows === 'number' ? identity.windows : undefined
           });
           if (!activeSocket || activeSocket.readyState !== 1 || activeId === id) {
             activeSocket = candidate;
@@ -214,13 +304,7 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
     },
     instances() {
       if (mode === 'peer') return peerInstances;
-      return connections.map(connection => ({
-        id: connection.id,
-        browser: connection.browser,
-        hint: connection.hint,
-        connectedAt: connection.connectedAt,
-        active: connection.socket === activeSocket
-      }));
+      return snapshot();
     },
     useInstance(id) {
       if (mode === 'peer') {
@@ -240,8 +324,9 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
       }
       activeSocket = connection.socket;
       activeId = connection.id;
+      pinnedId = connection.id;
       broadcastInstances();
-      return { active: activeId, instances: connections.map(item => ({ id: item.id, browser: item.browser, hint: item.hint, connectedAt: item.connectedAt, active: item.socket === activeSocket })) };
+      return { active: activeId, instances: snapshot() };
     },
     request(method, params = {}, timeoutMs = 15000) {
       if (mode === 'peer') {
@@ -254,13 +339,19 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
           socket.send(JSON.stringify({ type: 'call', id: callId, method, params }));
         });
       }
-      const target = activeSocket;
+      const { selector, rest } = splitSelector(params);
+      let target: WebSocket | undefined;
+      try {
+        target = resolveSocket(selector);
+      } catch (error) {
+        return Promise.reject(error);
+      }
       if (closed || !target || target.readyState !== 1) return Promise.reject(Object.assign(new Error('No browser connection'), { code: 'NO_CONNECTION', retryable: true }));
       const id = `r${++counter}`;
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => { pending.delete(id); reject(Object.assign(new Error('Browser request timed out'), { code: 'ACTION_TIMEOUT' })); }, timeoutMs);
         pending.set(id, { resolve, reject, timer });
-        target.send(JSON.stringify({ id, method, params }));
+        target.send(JSON.stringify({ id, method, params: rest }));
       });
     },
     async close() {

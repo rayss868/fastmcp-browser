@@ -38,8 +38,10 @@ function render(status) {
   fields.protocol.textContent = String(status.protocolVersion ?? 1);
   fields.tabs.textContent = String(status.authorizedTabs ?? 0);
   fields.session.textContent = session.sessionId ?? '-';
-  fields.group.textContent = session.group
-    ? `${session.group.title} (${session.group.mode}, ${session.tabIds?.length ?? 0} tabs)`
+  const group = session.group;
+  const hasGroup = group && (group.mode === 'logical' || Number.isInteger(group.id));
+  fields.group.textContent = hasGroup
+    ? `${group.title} (${group.mode}, ${session.tabIds?.length ?? 0} tabs)`
     : '-';
   fields.capabilities.textContent = JSON.stringify(status.capabilities ?? {}, null, 2);
 }

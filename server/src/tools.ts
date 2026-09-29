@@ -200,6 +200,19 @@ const schemas: Record<string, JsonSchema> = {
   browser_disconnect: object({})
 };
 
+const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);
+const TARGET_PROPERTIES: Record<string, JsonSchema> = {
+  browser: { type: 'string', description: 'Target browser brand or family to route this call, for example Chrome, Edge, Brave, chromium, or firefox. Pass this together with profile when more than one browser profile is connected; call browser_instances to see what is available.' },
+  profile: { type: 'string', description: 'Target connected extension instance by the profile id or label reported by browser_instances. Pass this together with browser when more than one browser profile is connected.' }
+};
+for (const [name, schema] of Object.entries(schemas)) {
+  if (ROUTING_EXEMPT.has(name)) continue;
+  const properties = schema.properties as Record<string, JsonSchema>;
+  for (const [key, value] of Object.entries(TARGET_PROPERTIES)) {
+    if (!(key in properties)) properties[key] = value;
+  }
+}
+
 export function getToolDefinitions(): Tool[] {
   return TOOL_NAMES.map(name => ({ name, description: TOOL_DOCS[name], inputSchema: schemas[name] }));
 }

@@ -91,7 +91,7 @@ test('bridge rejects an invalid handshake', async () => {
   await bridge.close();
 });
 
-async function connectInstance(port: number, token: string, instanceId: string) {
+async function connectInstance(port: number, token: string, instanceId: string, browser = 'TestBrowser') {
   const socket = new WebSocket(`ws://127.0.0.1:${port}`);
   await new Promise<void>((resolve, reject) => {
     socket.once('open', () => resolve());
@@ -101,9 +101,27 @@ async function connectInstance(port: number, token: string, instanceId: string) 
     type: 'handshake',
     token,
     instanceId,
-    browser: 'TestBrowser',
+    browser,
     hint: { title: `Title of ${instanceId}`, url: `https://${instanceId}.test/` }
   }));
+  await new Promise<void>((resolve, reject) => {
+    socket.once('message', raw => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'handshake_ok') resolve();
+      else reject(new Error('handshake failed'));
+    });
+    socket.once('error', reject);
+  });
+  return socket;
+}
+
+async function connectIdentity(port: number, token: string, identity: Record<string, unknown>) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  await new Promise<void>((resolve, reject) => {
+    socket.once('open', () => resolve());
+    socket.once('error', reject);
+  });
+  socket.send(JSON.stringify({ type: 'handshake', token, instanceId: identity.instanceId, identity }));
   await new Promise<void>((resolve, reject) => {
     socket.once('message', raw => {
       const message = JSON.parse(raw.toString());
@@ -149,7 +167,7 @@ test('bridge keeps every connected instance and lists them', async () => {
   }
 });
 
-test('bridge routes commands to the first instance until useInstance switches', async () => {
+test('bridge requires a selector or a pin when several instances are connected', async () => {
   const port = nextPort++;
   const bridge = createBridge(port, 'test-token');
   const sockets: WebSocket[] = [];
@@ -159,19 +177,18 @@ test('bridge routes commands to the first instance until useInstance switches', 
     sockets.push(first, second);
     const routed = collectRoutes([['i-a', first], ['i-b', second]]);
 
-    const initial = bridge.request('browser_tabs');
-    await wait(20);
-    assert.equal(routed.r1, 'i-a', 'commands must keep routing to the first connected instance');
-    response(first, 'r1', ['tab']);
-    assert.deepEqual(await initial, ['tab']);
+    await assert.rejects(
+      bridge.request('browser_tabs'),
+      error => (error as { code?: string }).code === 'INSTANCE_REQUIRED'
+    );
 
     const selected = bridge.useInstance('i-b') as { active: string };
     assert.equal(selected.active, 'i-b');
 
     const afterSwitch = bridge.request('browser_status');
     await wait(20);
-    assert.equal(routed.r2, 'i-b', 'useInstance must reroute commands');
-    response(second, 'r2', { connected: true });
+    assert.equal(routed.r1, 'i-b', 'useInstance must pin subsequent bare requests');
+    response(second, 'r1', { connected: true });
     assert.deepEqual(await afterSwitch, { connected: true });
   } finally {
     for (const socket of sockets) socket.close();
@@ -229,10 +246,10 @@ async function connectEcho(port: number, token: string, instanceId: string) {
   return socket;
 }
 
-async function waitForPeer(peer: ReturnType<typeof createBridge>) {
+async function waitForPeer(peer: ReturnType<typeof createBridge>, params: Record<string, unknown> = {}) {
   for (let attempt = 0; attempt < 40; attempt++) {
     try {
-      return await peer.request('browser_probe', {}, 100);
+      return await peer.request('browser_probe', params, 100);
     } catch {
       await wait(25);
     }
@@ -288,7 +305,7 @@ test('peer useInstance reroutes commands on the host', async () => {
   try {
     sockets.push(await connectEcho(port, 'test-token', 'i-a'));
     sockets.push(await connectEcho(port, 'test-token', 'i-b'));
-    await waitForPeer(peer);
+    await waitForPeer(peer, { profile: 'i-a' });
     await wait(30);
     const selected = peer.useInstance('i-b') as { active: string };
     assert.equal(selected.active, 'i-b');
@@ -325,5 +342,168 @@ test('peer takes over hosting when the host closes', async () => {
   } finally {
     socket?.close();
     await peer.close();
+  }
+});
+
+test('bridge captures the structured identity from a handshake', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  let socket: WebSocket | undefined;
+  try {
+    socket = await connectIdentity(port, 'test-token', {
+      instanceId: 'i-a',
+      profile: 'i-a',
+      label: 'Chrome-i-a',
+      browser: { brand: 'Chrome', family: 'chromium', version: '120.0' },
+      platform: 'Win32',
+      language: 'en-US',
+      tabs: 4,
+      windows: 2,
+      activeTab: { title: 'Inbox', url: 'https://mail.test/' }
+    });
+    const [instance] = bridge.instances();
+    assert.equal(instance.label, 'Chrome-i-a');
+    assert.equal(instance.profile, 'i-a');
+    assert.equal(instance.browser, 'Chrome');
+    assert.equal(instance.family, 'chromium');
+    assert.equal(instance.version, '120.0');
+    assert.equal(instance.platform, 'Win32');
+    assert.equal(instance.language, 'en-US');
+    assert.equal(instance.tabs, 4);
+    assert.equal(instance.windows, 2);
+    assert.deepEqual(instance.hint, { title: 'Inbox', url: 'https://mail.test/' });
+  } finally {
+    socket?.close();
+    await bridge.close();
+  }
+});
+
+test('bridge requires a selector when several instances are connected', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  try {
+    sockets.push(await connectInstance(port, 'test-token', 'i-a', 'Chrome'));
+    sockets.push(await connectInstance(port, 'test-token', 'i-b', 'Firefox'));
+    await assert.rejects(
+      bridge.request('browser_tabs'),
+      error => (error as { code?: string }).code === 'INSTANCE_REQUIRED'
+    );
+  } finally {
+    for (const socket of sockets) socket.close();
+    await bridge.close();
+  }
+});
+
+test('bridge routes by browser, profile, and instance selectors', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  try {
+    const chrome = await connectInstance(port, 'test-token', 'i-a', 'Chrome');
+    const firefox = await connectInstance(port, 'test-token', 'i-b', 'Firefox');
+    sockets.push(chrome, firefox);
+    const routed = collectRoutes([['i-a', chrome], ['i-b', firefox]]);
+
+    const byBrowser = bridge.request('browser_tabs', { browser: 'chrome' });
+    await wait(20);
+    assert.equal(routed.r1, 'i-a', 'a browser selector must route to the matching instance');
+    response(chrome, 'r1', ['tab']);
+    assert.deepEqual(await byBrowser, ['tab']);
+
+    const byProfile = bridge.request('browser_status', { profile: 'i-b' });
+    await wait(20);
+    assert.equal(routed.r2, 'i-b', 'a profile selector must route to the matching instance');
+    response(firefox, 'r2', { connected: true });
+    assert.deepEqual(await byProfile, { connected: true });
+
+    const byInstance = bridge.request('browser_tabs', { instance: 'i-b' });
+    await wait(20);
+    assert.equal(routed.r3, 'i-b', 'an instance selector must route to the exact instance');
+    response(firefox, 'r3', ['tab']);
+    assert.deepEqual(await byInstance, ['tab']);
+  } finally {
+    for (const socket of sockets) socket.close();
+    await bridge.close();
+  }
+});
+
+test('bridge strips the routing keys from forwarded params', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  try {
+    const chrome = await connectInstance(port, 'test-token', 'i-a', 'Chrome');
+    sockets.push(chrome);
+    const seen: Record<string, unknown> = {};
+    chrome.on('message', raw => {
+      const message = JSON.parse(raw.toString()) as { id?: string; params?: Record<string, unknown> };
+      if (typeof message.id === 'string') seen[message.id] = message.params;
+    });
+
+    const request = bridge.request('browser_wait', { browser: 'Chrome', tabId: 7, milliseconds: 50 });
+    await wait(20);
+    assert.deepEqual(seen.r1, { tabId: 7, milliseconds: 50 }, 'routing keys must not reach the extension');
+    response(chrome, 'r1', { waited: true });
+    assert.deepEqual(await request, { waited: true });
+  } finally {
+    for (const socket of sockets) socket.close();
+    await bridge.close();
+  }
+});
+
+test('bridge rejects unmatched and ambiguous selectors', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  try {
+    sockets.push(await connectInstance(port, 'test-token', 'i-a', 'Chrome'));
+    sockets.push(await connectInstance(port, 'test-token', 'i-b', 'Chrome'));
+    await assert.rejects(
+      bridge.request('browser_tabs', { profile: 'missing' }),
+      error => (error as { code?: string }).code === 'INSTANCE_NOT_FOUND'
+    );
+    await assert.rejects(
+      bridge.request('browser_tabs', { browser: 'Safari' }),
+      error => (error as { code?: string }).code === 'INSTANCE_NOT_FOUND'
+    );
+    await assert.rejects(
+      bridge.request('browser_tabs', { browser: 'Chrome' }),
+      error => (error as { code?: string }).code === 'INSTANCE_AMBIGUOUS'
+    );
+  } finally {
+    for (const socket of sockets) socket.close();
+    await bridge.close();
+  }
+});
+
+test('bridge routes by the profile label from the identity handshake', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  try {
+    const work = await connectIdentity(port, 'test-token', {
+      instanceId: 'i-work',
+      label: 'Chrome-work',
+      browser: { brand: 'Chrome', family: 'chromium' },
+      activeTab: { title: 'Work', url: 'https://work.test/' }
+    });
+    const personal = await connectIdentity(port, 'test-token', {
+      instanceId: 'i-home',
+      label: 'Chrome-home',
+      browser: { brand: 'Chrome', family: 'chromium' },
+      activeTab: { title: 'Home', url: 'https://home.test/' }
+    });
+    sockets.push(work, personal);
+    const routed = collectRoutes([['i-work', work], ['i-home', personal]]);
+
+    const request = bridge.request('browser_tabs', { profile: 'Chrome-home' });
+    await wait(20);
+    assert.equal(routed.r1, 'i-home', 'a label must select the right profile when two instances share a brand');
+    response(personal, 'r1', ['tab']);
+    assert.deepEqual(await request, ['tab']);
+  } finally {
+    for (const socket of sockets) socket.close();
+    await bridge.close();
   }
 });

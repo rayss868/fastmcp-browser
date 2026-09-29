@@ -238,6 +238,25 @@ test('reconcile prunes tabs that are no longer open', async () => {
   assert.deepEqual(info.tabIds, [31]);
 });
 
+test('reconcile drops tabs and forgets the group when it was closed', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  api.alive.add(10);
+  await session.addTab(10);
+  const groupId = (await session.info()).group.id;
+  assert.ok(api.groups.has(groupId));
+
+  // user closes the tab, which removes the now-empty group
+  api.alive.delete(10);
+  api.groups.delete(groupId);
+
+  const info = await session.reconcile();
+  assert.deepEqual(info.tabIds, []);
+  assert.equal(info.group.id, null);
+});
+
 test('bridgeIdentity keeps a stable instance id with an active tab hint', async () => {
   const { bridgeIdentity } = await import('../src/session.js');
   const storage = createStorage();
@@ -257,4 +276,29 @@ test('bridgeIdentity keeps a stable instance id with an active tab hint', async 
   assert.equal(first.instanceId, second.instanceId, 'instanceId must be stable across reconnects');
   assert.equal(first.hint?.title, 'Dashboard', 'hint must describe the active tab');
   assert.match(first.hint?.url ?? '', /dash\.test/, 'hint must carry the active url');
+});
+
+test('bridgeIdentity reports a structured profile identity', async () => {
+  const { bridgeIdentity } = await import('../src/session.js');
+  const storage = createStorage();
+  const api = {
+    storage,
+    tabs: {
+      query: async () => [
+        { id: 1, active: true, title: 'Inbox', url: 'https://mail.test/', windowId: 3 },
+        { id: 2, active: false, title: 'Docs', url: 'https://docs.test/', windowId: 3 },
+        { id: 3, active: false, title: 'Other', url: 'https://other.test/', windowId: 4 }
+      ]
+    }
+  };
+  const { identity, instanceId, hint } = await bridgeIdentity(api, { family: 'chromium', brand: 'Chrome' });
+  assert.equal(identity.instanceId, instanceId);
+  assert.equal(identity.profile, instanceId, 'profile must default to the instance id');
+  assert.equal(identity.label, `Chrome-${instanceId.slice(-4)}`, 'label must fall back to brand plus id suffix');
+  assert.equal(identity.browser.brand, 'Chrome');
+  assert.equal(identity.browser.family, 'chromium');
+  assert.equal(identity.tabs, 3, 'identity must report the open tab count');
+  assert.equal(identity.windows, 2, 'identity must report the distinct window count');
+  assert.equal(identity.activeTab?.title, 'Inbox', 'identity must carry the active tab hint');
+  assert.equal(hint?.title, 'Inbox');
 });

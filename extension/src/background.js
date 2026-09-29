@@ -14,12 +14,10 @@ const networkMonitor = createNetworkMonitor(api.webRequest, 200, {
     ? requestId => api.webRequest.filterResponseData(requestId)
     : undefined
 });
-const session = createSessionManager({
-  api,
-  browser: detectBrowser(typeof navigator === 'undefined' ? '' : navigator.userAgent, {
-    brave: Boolean(globalThis.navigator?.brave)
-  })
+const browser = detectBrowser(typeof navigator === 'undefined' ? '' : navigator.userAgent, {
+  brave: Boolean(globalThis.navigator?.brave)
 });
+const session = createSessionManager({ api, browser });
 
 async function attachSession(method, result) {
   if (method === 'browser_open') {
@@ -387,7 +385,7 @@ function start() {
   socket = new WebSocket(`ws://127.0.0.1:${PORT}`);
   socket.onopen = async () => {
     connected = false;
-    send(socket, { type: 'handshake', token: await token(), browser: api.runtime.getManifest().name, ...await bridgeIdentity(api) });
+    send(socket, { type: 'handshake', token: await token(), browser: api.runtime.getManifest().name, ...await bridgeIdentity(api, browser) });
   };
   socket.onmessage = async event => {
     const message = JSON.parse(event.data);
@@ -418,7 +416,7 @@ api.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
 
 api.runtime.onMessage?.addListener(async message => {
   if (message?.method === 'status.get') {
-    const info = await session.info();
+    const info = await session.reconcile();
     router.adopt(info.tabIds);
     return {
       connected,
