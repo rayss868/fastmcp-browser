@@ -33,14 +33,11 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (32 MCP browser tools).
 
-            ### What's new in v0.4.0
+            ### What's new in v0.4.1
 
-            - **Multi-profile routing** — every browser tool accepts optional `browser` and `profile` selectors, and the bridge routes each call to the matching connected extension instead of the first one that connected. Adds `browser_instances` (list connected profiles with id, brand, label, platform, language, tab/window counts, and active tab) and `browser_use_instance` (pin a default target). With several profiles connected and no selector it refuses with `INSTANCE_REQUIRED` rather than guessing (`INSTANCE_NOT_FOUND` / `INSTANCE_AMBIGUOUS` when a selector matches zero or many). Single-profile setups keep working with no selector.
-            - **Live, per-profile status popup** — the popup updates while it stays open, and each profile shows its own instance label instead of one merged dataset. The "Automation" tab group is the source of truth for the authorized set: tabs you drag into the group count, and the session resets when the group is gone.
-            - **`browser_pointer_drag` end-to-end** — one drag sequence that also emits mouse-compatible events, so drags work on sliders and mouse-only widgets.
-            - **Stale-ref recovery** — snapshots store a duplicate index, so a stale ref on a page with many same-labelled controls (for example a Google Forms Likert grid) recovers the correct element instead of mis-clicking the first match.
-            - **`browser_fill_form` `div[role="radio"]`** — fills Google Forms-style radios that are not native inputs.
-            - **Release housekeeping** — MCP server version bumped to 0.4.0; README tool and test counts corrected.
+            - **Security fix: browser tools are now sandboxed to the "Automation" tab group.** `browser_tabs` only ever lists tabs inside the session group and authorizes exactly that set; any tool that used to enumerate or target tabs outside the group no longer can. A tab dragged out of the group immediately loses authorization (the authorized set is replaced, not accumulated), so the bridge can no longer read, click, or type on tabs the session does not own.
+            - **The identity hint is group-scoped too.** The `activeTab` hint reported by `browser_instances` is now derived from group tabs only; if the group has no active tab, the hint is omitted. No tab outside the group is exposed through the bridge anymore.
+            - **Housekeeping** — removed the now-redundant `browser_tabs` reconcile in the session attach path (authorization is derived once from the group); added regression tests for group-only listing, hint sandboxing, and authorization replacement.
 
             ### Install
 
