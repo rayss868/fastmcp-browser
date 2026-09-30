@@ -27,10 +27,6 @@ async function attachSession(method, result) {
     if (Number.isInteger(tabId)) await session.addTab(tabId);
     return result;
   }
-  if (method === 'browser_tabs') {
-    await session.reconcile();
-    return result;
-  }
   if (method === 'browser_status' && result && typeof result === 'object' && !Array.isArray(result)) {
     await session.reconcile();
     const info = await session.info();
@@ -175,7 +171,10 @@ async function waitForPage(tabId, params) {
 }
 
 async function tabs(method, params) {
-  if (method === 'browser_tabs') return api.tabs.query({});
+  if (method === 'browser_tabs') {
+    await session.reconcile();
+    return session.listTabs();
+  }
   if (method === 'browser_open') return session.openTab(String(params.url), { newTab: params.newTab === true });
   if (method === 'browser_close') return api.tabs.remove(Number(params.tabId));
   if (method === 'browser_focus') return api.tabs.update(Number(params.tabId), { active: true });
@@ -384,7 +383,7 @@ function start() {
   socket = new WebSocket(`ws://127.0.0.1:${PORT}`);
   socket.onopen = async () => {
     connected = false;
-    const bridge = await bridgeIdentity(api, browser);
+    const bridge = await bridgeIdentity(api, browser, session);
     identity = bridge.identity;
     send(socket, { type: 'handshake', token: await token(), browser: api.runtime.getManifest().name, ...bridge });
   };
@@ -425,7 +424,7 @@ api.runtime.onMessage?.addListener(async message => {
   if (message?.method === 'status.get') {
     const info = await session.reconcile();
     router.adopt(info.tabIds);
-    if (!identity) identity = (await bridgeIdentity(api, browser)).identity;
+    if (!identity) identity = (await bridgeIdentity(api, browser, session)).identity;
     return {
       connected,
       instance: identity,

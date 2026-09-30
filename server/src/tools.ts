@@ -60,7 +60,7 @@ export const TOOL_NAMES = [
 export const TOOL_DOCS: Record<string, string> = {
   browser_connect: 'Open the WebSocket bridge to the extension and verify the handshake; returns bridge connectivity and capabilities. Keep payloads light during a session: prefer browser_inventory with a narrow filter over browser_snapshot, use a small limit on browser_network, and have browser_evaluate return only the few values you actually need.',
   browser_status: 'Report bridge status, authorized tab count, active session group, browser identity, and supported capabilities.',
-  browser_tabs: 'List browser tabs as compact entries (id, title, url, active, groupId, windowId); also authorizes those tabs for this session. Avoid full:true unless raw tab fields are required — it returns a much larger payload.',
+  browser_tabs: 'List the tabs inside the current Automation group as compact entries (id, title, url, active, groupId, windowId); authorizes exactly those group tabs for this session and revokes anything no longer in the group. Tabs outside the group are never listed and cannot be targeted — the group is the session sandbox. Avoid full:true unless raw tab fields are required — it returns a much larger payload.',
   browser_open: 'Open a URL in the live Automation tab by default. Set newTab:true to open a separate background tab; all automation tabs join the session group.',
   browser_close: 'Close the given tab and revoke its session authorization so it cannot be targeted again.',
   browser_focus: 'Activate the given tab so subsequent page actions target it visibly.',

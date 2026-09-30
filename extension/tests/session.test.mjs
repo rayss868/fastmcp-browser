@@ -275,6 +275,33 @@ test('reconcile adopts tabs already present in the Automation group', async () =
   assert.equal(info.group.id, groupId);
 });
 
+test('listTabs returns only tabs inside the Automation group', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  api.alive.add(10);
+  await session.addTab(10);
+  // a tab living outside the group must never be exposed to the bridge
+  api.alive.add(99);
+
+  const listed = await session.listTabs();
+  assert.deepEqual(listed.map(tab => tab.id), [10]);
+});
+
+test('listTabs falls back to the managed set without native groups', async () => {
+  const storage = createStorage();
+  const api = createLogicalApi(storage);
+  const session = createSessionManager({ api, browser: { family: 'firefox', brand: 'Firefox' } });
+
+  api.alive.add(20);
+  await session.addTab(20);
+  api.alive.add(99);
+
+  const listed = await session.listTabs();
+  assert.deepEqual(listed.map(tab => tab.id), [20]);
+});
+
 test('bridgeIdentity keeps a stable instance id with an active tab hint', async () => {
   const { bridgeIdentity } = await import('../src/session.js');
   const storage = createStorage();
@@ -319,4 +346,39 @@ test('bridgeIdentity reports a structured profile identity', async () => {
   assert.equal(identity.windows, 2, 'identity must report the distinct window count');
   assert.equal(identity.activeTab?.title, 'Inbox', 'identity must carry the active tab hint');
   assert.equal(hint?.title, 'Inbox');
+});
+
+test('bridgeIdentity sandboxes the active tab hint to the session group', async () => {
+  const { bridgeIdentity } = await import('../src/session.js');
+  const api = {
+    storage: createStorage(),
+    tabs: {
+      query: async () => [
+        { id: 1, active: false, title: 'Backoffice', url: 'https://group.test/', windowId: 3 },
+        { id: 2, active: true, title: 'Hubstaff Talent', url: 'https://outside.test/', windowId: 3 }
+      ]
+    }
+  };
+  const session = {
+    listTabs: async () => [{ id: 1, active: false, title: 'Backoffice', url: 'https://group.test/', windowId: 3 }]
+  };
+  const { hint, identity } = await bridgeIdentity(api, { family: 'chromium', brand: 'Chrome' }, session);
+  assert.equal(hint?.title, 'Backoffice', 'hint must not point at a tab outside the group');
+  assert.doesNotMatch(hint?.url ?? '', /outside\.test/);
+  assert.equal(identity.activeTab?.title, 'Backoffice');
+});
+
+test('bridgeIdentity omits the hint when no group tab is available', async () => {
+  const { bridgeIdentity } = await import('../src/session.js');
+  const api = {
+    storage: createStorage(),
+    tabs: {
+      query: async () => [
+        { id: 2, active: true, title: 'Outside', url: 'https://outside.test/', windowId: 1 }
+      ]
+    }
+  };
+  const session = { listTabs: async () => [] };
+  const { hint } = await bridgeIdentity(api, { family: 'chromium', brand: 'Chrome' }, session);
+  assert.equal(hint, undefined);
 });

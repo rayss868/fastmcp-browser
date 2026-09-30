@@ -196,3 +196,33 @@ test('adopt authorizes session tabs discovered outside the router', async () => 
   assert.deepEqual(result, { OK: true });
   assert.equal(forwarded.tabId, 5);
 });
+
+test('browser_tabs replaces authorization so tabs outside the group are revoked', async () => {
+  let listing = [{ id: 7 }];
+  const router = createCommandRouter({
+    execute: async method => (method === 'browser_tabs' ? listing : { OK: true })
+  });
+
+  await router.handle('browser_tabs');
+  assert.deepEqual(await router.handle('browser_snapshot', { tabId: 7, revision: 1 }), { OK: true });
+
+  listing = [{ id: 8 }];
+  await router.handle('browser_tabs');
+  await assert.rejects(
+    router.handle('browser_snapshot', { tabId: 7, revision: 1 }),
+    error => error.code === 'PERMISSION_DENIED'
+  );
+  assert.deepEqual(await router.handle('browser_snapshot', { tabId: 8, revision: 1 }), { OK: true });
+});
+
+test('adopt replaces the authorized set instead of accumulating', async () => {
+  const router = createCommandRouter({ execute: async () => ({ OK: true }) });
+
+  router.adopt([5, 6]);
+  router.adopt([9]);
+  await assert.rejects(
+    router.handle('browser_evaluate', { tabId: 5, expression: '1' }),
+    error => error.code === 'PERMISSION_DENIED'
+  );
+  assert.deepEqual(await router.handle('browser_evaluate', { tabId: 9, expression: '1' }), { OK: true });
+});

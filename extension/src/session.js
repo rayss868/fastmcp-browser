@@ -166,6 +166,18 @@ export function createSessionManager({
       return infoOf(s);
     },
 
+    // Only tabs inside the session group are ever exposed to the bridge; tabs
+    // outside it are invisible and therefore cannot be targeted.
+    async listTabs() {
+      const s = await ensure();
+      const openTabs = await api.tabs.query({});
+      if (supportsNativeGroups() && s.groupId !== null) {
+        return openTabs.filter(tab => tab.groupId === s.groupId);
+      }
+      const managed = new Set(s.tabIds);
+      return openTabs.filter(tab => managed.has(tab.id));
+    },
+
     async info() {
       return infoOf(await ensure());
     }
@@ -186,7 +198,7 @@ function browserVersion(userAgent = '') {
   return match ? match[1] : undefined;
 }
 
-export async function bridgeIdentity(api, browser = { family: 'chromium', brand: 'Unknown' }) {
+export async function bridgeIdentity(api, browser = { family: 'chromium', brand: 'Unknown' }, session) {
   const area = api.storage.local;
   const stored = await area.get(['fastmcpInstance', 'fastmcpInstanceLabel']);
   let instanceId = stored.fastmcpInstance;
@@ -204,7 +216,10 @@ export async function bridgeIdentity(api, browser = { family: 'chromium', brand:
     const open = await api.tabs.query({});
     tabs = open.length;
     windows = new Set(open.map(tab => tab.windowId)).size;
-    const active = open.find(tab => tab.active) ?? open[0];
+    // Never hint at a tab the bridge cannot target: the active tab must belong
+    // to the session group, otherwise the hint leaks a tab outside the sandbox.
+    const candidates = session ? await session.listTabs() : open;
+    const active = candidates.find(tab => tab.active) ?? candidates[0];
     if (active) hint = { title: String(active.title ?? '').slice(0, 100), url: String(active.url ?? '').slice(0, 200) };
   } catch {
     // hint is optional; some browsers restrict tabs.query at handshake time

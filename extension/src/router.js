@@ -126,7 +126,12 @@ export function createCommandRouter({ execute, capabilities = {}, resolveTabId, 
 
       if (context.signal?.aborted) throw cancellationError();
 
-      if (method === 'browser_tabs') rememberTabs(authorizedTabs, result);
+      if (method === 'browser_tabs') {
+        // browser_tabs returns exactly the group membership, so replace rather
+        // than accumulate: a tab dragged out of the group loses authorization.
+        authorizedTabs.clear();
+        rememberTabs(authorizedTabs, result);
+      }
       if (method === 'browser_open') rememberTabs(authorizedTabs, [result]);
       if (method === 'browser_close') authorizedTabs.delete(tabIdOf(params.tabId));
 
@@ -135,6 +140,9 @@ export function createCommandRouter({ execute, capabilities = {}, resolveTabId, 
     },
 
     adopt(tabIds) {
+      // The group is the source of truth: replace the set so tabs no longer in
+      // the group are revoked, not just added to.
+      authorizedTabs.clear();
       rememberTabs(authorizedTabs, (Array.isArray(tabIds) ? tabIds : [tabIds]).map(value => ({ id: value })));
     },
 
