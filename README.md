@@ -8,9 +8,9 @@
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
 
-- **30 MCP tools**, full schema footprint ≈ **3.4k tokens**
+- **32 MCP tools**, full schema footprint ≈ **10k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 30/30, extension 63/63, build green for Chromium + Firefox
+- **Tests**: server 53/53, extension 81/81, build green for Chromium + Firefox
 
 ---
 
@@ -41,7 +41,7 @@
 2. **No CDP / no `chrome.debugger`** — nothing to attach, nothing for anti-bot layers to see as an automation driver. (Honest caveat: it is still automation on the page — it reduces fingerprints, it is not invisibility.)
 3. **Multi-profile as a first class citizen** — two profiles with the same extension connected at once; `browser_instances` lists them (stable `instanceId`, browser brand, active-tab hint), `browser_use_instance` reroutes the bridge. Playwright MCP needs one process per profile.
 4. **Persistent session model** — tabs join an `Automation` tab group; the session survives across AI runs and keeps `tabIds` reconciled.
-5. **Tiny context cost** — the *entire* 30-tool schema is ~3.4k tokens; snapshots return compact `ref` handles instead of raw DOM.
+5. **Tiny context cost** — the *entire* 32-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
 6. **Loopback-only bridge** — `127.0.0.1:9229`, token-authenticated. No external endpoints, works behind middleware/AI gateways with no proxy config (a known Playwright MCP HTTP/SSE pain point).
 
 ## Benchmark
@@ -64,7 +64,7 @@ Context vs the wider MCP browser landscape:
 | Metric | FastMCP Browser | @playwright/mcp | Notes / source |
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
-| Schema footprint (all tools) | **~3.4k tokens / 30 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
+| Schema footprint (all tools) | **~10k tokens / 32 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
 | Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 (see [docs/research-browser-automation.md](docs/research-browser-automation.md)) |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
@@ -79,7 +79,7 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 │  Claude, etc │                 │  tools → bridge  │   token handshake        │  background SW + content  │
 └──────────────┘                 └──────────────────┘   multi-instance         │  engine (page MAIN world) │
                                     │  bridge.ts        routing + promote      └───────────────────────────┘
-                                    │  tools.ts (30)                                               │
+                                    │  tools.ts (32)                                               │
                                     └─ index.ts (MCP SDK, zod)                                     ▼
                                                                                     chrome.* APIs, NO CDP
 ```
@@ -169,7 +169,7 @@ node dist/src/cli.js --help
 
 The tool name must match a known tool; the optional second argument is a JSON object of parameters. Success prints one JSON line (`{"ok":true,"result":...}`) to stdout and exits 0; failures print `{"ok":false,"error":{...}}` to stderr and exit nonzero. `FASTMCP_PORT` (default 9229), `FASTMCP_TOKEN`, and `FASTMCP_CLI_TIMEOUT_MS` (request timeout in ms) are read from the environment.
 
-## Tool reference (30)
+## Tool reference (32)
 
 | Group | Tools |
 |---|---|
@@ -242,8 +242,8 @@ The extension popup displays detected capabilities per browser profile:
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 30 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 66 session/router/bridge/network/screenshot/build tests
+cd server   && npm test    # build + 53 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 81 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -272,13 +272,13 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   ├── banner.png                      # README hero
 │   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 ├── server/
-│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (30 registry)
-│   ├── tests/      # 30 tests
+│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
+│   ├── tests/      # 53 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 66 tests
+    ├── tests/      # 81 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
