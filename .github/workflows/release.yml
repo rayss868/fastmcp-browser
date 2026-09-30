@@ -31,21 +31,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (32 MCP browser tools, including `browser_act`, `browser_inspect`, `browser_upload`, `browser_network`, `browser_fill_form`, and `browser_wait_for`).
+            WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (32 MCP browser tools).
 
-            **Multi-profile routing.** Every browser tool now accepts optional `browser` and `profile` selectors, and the bridge routes each call to the matching connected extension instead of the first one that connected. `browser_instances` lists each connected profile with its id, brand, label, platform, language, tab/window counts, and active tab; `browser_use_instance` pins a default target. With several profiles connected and no selector, the bridge refuses with `INSTANCE_REQUIRED` rather than guessing (`INSTANCE_NOT_FOUND` / `INSTANCE_AMBIGUOUS` when a selector matches zero or many). Single-profile setups keep working with no selector.
+            ### What's new in v0.4.0
 
-            **Live, per-profile status popup.** The popup polls and reacts to a background push channel, so the authorized-tab count updates while it stays open, and each profile's popup shows its own instance label instead of one merged dataset. The "Automation" tab group is the source of truth for the authorized set: tabs you drag into the group count, and the session resets when the group is gone.
+            - **Multi-profile routing** — every browser tool accepts optional `browser` and `profile` selectors, and the bridge routes each call to the matching connected extension instead of the first one that connected. Adds `browser_instances` (list connected profiles with id, brand, label, platform, language, tab/window counts, and active tab) and `browser_use_instance` (pin a default target). With several profiles connected and no selector it refuses with `INSTANCE_REQUIRED` rather than guessing (`INSTANCE_NOT_FOUND` / `INSTANCE_AMBIGUOUS` when a selector matches zero or many). Single-profile setups keep working with no selector.
+            - **Live, per-profile status popup** — the popup updates while it stays open, and each profile shows its own instance label instead of one merged dataset. The "Automation" tab group is the source of truth for the authorized set: tabs you drag into the group count, and the session resets when the group is gone.
+            - **`browser_pointer_drag` end-to-end** — one drag sequence that also emits mouse-compatible events, so drags work on sliders and mouse-only widgets.
+            - **Stale-ref recovery** — snapshots store a duplicate index, so a stale ref on a page with many same-labelled controls (for example a Google Forms Likert grid) recovers the correct element instead of mis-clicking the first match.
+            - **`browser_fill_form` `div[role="radio"]`** — fills Google Forms-style radios that are not native inputs.
+            - **Release housekeeping** — MCP server version bumped to 0.4.0; README tool and test counts corrected.
 
-            **`browser_pointer_drag` end-to-end.** The tool now drives the pointer through a single drag sequence that also emits mouse-compatible events, so drags work on sliders and mouse-only widgets.
+            ### Install
 
-            **Stale-ref recovery.** Snapshots store a duplicate index, so a stale ref on a page with many same-labelled controls (for example a Google Forms Likert grid) recovers the correct element instead of mis-clicking the first match. `browser_fill_form` also fills `div[role="radio"]` widgets (Google Forms-style radios that are not native inputs).
-
-            The Firefox `.xpi` has `manifest.json` at the archive root. It is unsigned; standard Firefox release builds require a Mozilla-signed add-on for permanent installation. LibreWolf and Firefox Developer Edition/Nightly may allow unsigned add-ons when signature enforcement is disabled.
-
-            Alternatively, unzip an archive and load it unpacked:
+            Unzip an archive and load it unpacked:
             - **Chromium** (`fastmcp-browser-extension-chromium.zip`) → `chrome://extensions` → Load unpacked → the `chromium` folder
             - **Firefox** (`fastmcp-browser-extension-firefox.zip`) → `about:debugging` → Load Temporary Add-on → `firefox/manifest.json`
+
+            The Firefox `.xpi` has `manifest.json` at the archive root. It is unsigned; standard Firefox release builds require a Mozilla-signed add-on for permanent installation. LibreWolf and Firefox Developer Edition/Nightly may allow unsigned add-ons when signature enforcement is disabled.
           files: |
             extension/dist/fastmcp-browser-extension-chromium.zip
             extension/dist/fastmcp-browser-extension-firefox.zip
