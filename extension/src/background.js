@@ -9,6 +9,7 @@ const PORT = 9229;
 const contentFiles = ['src/content/engine.js'];
 let socket;
 let connected = false;
+let identity;
 const networkMonitor = createNetworkMonitor(api.webRequest, 200, {
   filterResponseData: typeof api.webRequest?.filterResponseData === 'function'
     ? requestId => api.webRequest.filterResponseData(requestId)
@@ -385,7 +386,9 @@ function start() {
   socket = new WebSocket(`ws://127.0.0.1:${PORT}`);
   socket.onopen = async () => {
     connected = false;
-    send(socket, { type: 'handshake', token: await token(), browser: api.runtime.getManifest().name, ...await bridgeIdentity(api, browser) });
+    const bridge = await bridgeIdentity(api, browser);
+    identity = bridge.identity;
+    send(socket, { type: 'handshake', token: await token(), browser: api.runtime.getManifest().name, ...bridge });
   };
   socket.onmessage = async event => {
     const message = JSON.parse(event.data);
@@ -404,22 +407,30 @@ function start() {
   };
 }
 
-api.tabs.onRemoved?.addListener((tabId, removeInfo) => {
+api.tabs.onRemoved?.addListener(async (tabId, removeInfo) => {
   networkMonitor.clearTab(tabId);
   emit('tab.removed', { tabId, windowId: removeInfo.windowId });
+  await session.reconcile();
+  api.runtime.sendMessage?.({ method: 'status.changed' })?.catch?.(() => {});
 });
 
-api.tabs.onUpdated?.addListener((tabId, changeInfo, tab) => {
+api.tabs.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') emit('page.navigated', { tabId, url: changeInfo.url ?? tab.url ?? null, status: changeInfo.status });
   if (changeInfo.status === 'complete') emit('tab.updated', { tabId, url: tab.url ?? null, title: tab.title ?? null, status: changeInfo.status });
+  if (changeInfo.groupId !== undefined) {
+    await session.reconcile();
+    api.runtime.sendMessage?.({ method: 'status.changed' })?.catch?.(() => {});
+  }
 });
 
 api.runtime.onMessage?.addListener(async message => {
   if (message?.method === 'status.get') {
     const info = await session.reconcile();
     router.adopt(info.tabIds);
+    if (!identity) identity = (await bridgeIdentity(api, browser)).identity;
     return {
       connected,
+      instance: identity,
       browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible',
       protocolVersion: 1,
       authorizedTabs: info.tabIds.length,

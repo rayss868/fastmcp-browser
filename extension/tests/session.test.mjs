@@ -257,6 +257,24 @@ test('reconcile drops tabs and forgets the group when it was closed', async () =
   assert.equal(info.group.id, null);
 });
 
+test('reconcile adopts tabs already present in the Automation group', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  api.alive.add(10);
+  await session.addTab(10);
+  const groupId = (await session.info()).group.id;
+
+  // a tab the user drags into the Automation group after the session started
+  api.alive.add(11);
+  api.groups.get(groupId).add(11);
+
+  const info = await session.reconcile();
+  assert.deepEqual(info.tabIds.sort(), [10, 11]);
+  assert.equal(info.group.id, groupId);
+});
+
 test('bridgeIdentity keeps a stable instance id with an active tab hint', async () => {
   const { bridgeIdentity } = await import('../src/session.js');
   const storage = createStorage();

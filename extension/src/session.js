@@ -139,22 +139,30 @@ export function createSessionManager({
 
     async reconcile() {
       const s = await ensure();
+      const before = `${s.groupId ?? ''}:${s.tabIds.join(',')}`;
       try {
         const openTabs = await api.tabs.query({});
-        const alive = new Set(openTabs.map(tab => tab.id));
         if (supportsNativeGroups() && s.groupId !== null) {
-          const inGroup = new Set(
-            openTabs.filter(tab => tab.groupId === s.groupId).map(tab => tab.id)
-          );
-          s.tabIds = s.tabIds.filter(id => alive.has(id) && inGroup.has(id));
-          // Chrome drops a group once its last tab closes; forget the stale id
-          if (inGroup.size === 0) s.groupId = null;
+          // The Automation group is the source of truth: the authorized set is
+          // whatever currently sits in it, including tabs the user drags in.
+          const inGroup = openTabs
+            .filter(tab => tab.groupId === s.groupId)
+            .map(tab => tab.id);
+          if (inGroup.length === 0) {
+            // Chrome drops a group once its last tab closes; forget the stale id
+            s.groupId = null;
+            s.tabIds = [];
+          } else {
+            s.tabIds = inGroup;
+          }
         } else {
+          const alive = new Set(openTabs.map(tab => tab.id));
           s.tabIds = s.tabIds.filter(id => alive.has(id));
         }
       } catch {
         // keep last known membership when the browser cannot be queried
       }
+      if (`${s.groupId ?? ''}:${s.tabIds.join(',')}` !== before) await persist();
       return infoOf(s);
     },
 

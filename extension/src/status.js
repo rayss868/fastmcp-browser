@@ -3,6 +3,7 @@ const api = globalThis.browser ?? globalThis.chrome;
 const fields = {
   connection: document.querySelector('#connection'),
   browser: document.querySelector('#browser'),
+  profile: document.querySelector('#profile'),
   protocol: document.querySelector('#protocol'),
   tabs: document.querySelector('#tabs'),
   session: document.querySelector('#session'),
@@ -35,6 +36,10 @@ function render(status) {
   fields.browser.textContent = session.browser?.brand
     ? `${session.browser.brand} (${detail})`
     : detail === 'unknown' ? 'Unknown' : detail;
+  const instance = status.instance;
+  fields.profile.textContent = instance
+    ? [...new Set([instance.label, instance.profile].filter(Boolean))].join(' · ') || '-'
+    : '-';
   fields.protocol.textContent = String(status.protocolVersion ?? 1);
   fields.tabs.textContent = String(status.authorizedTabs ?? 0);
   fields.session.textContent = session.sessionId ?? '-';
@@ -59,4 +64,11 @@ document.querySelector('#disconnect').addEventListener('click', async () => {
   await refresh();
 });
 
+// Live refresh: react to a push from the background service worker and fall
+// back to polling so the popup reflects tab/group changes while it stays open.
+api.runtime.onMessage?.addListener(message => {
+  if (message?.method === 'status.changed') refresh();
+});
+
 await refresh();
+setInterval(refresh, 1000);
