@@ -1,4 +1,4 @@
-import { createReferenceStore, boundingBox } from './refs.js';
+import { createReferenceStore, boundingBox, recoverRef } from './refs.js';
 import { createDomSemantics, deepQueryAll, sanitizeText } from './semantics.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
@@ -46,11 +46,10 @@ function locate(ref, revision) {
     const descriptor = refs.descriptorFor(ref);
     if (!descriptor) throw error;
     // React/MUI rerenders replace the node; match the equivalent role+name again.
-    for (const element of semantics.candidates()) {
-      if (element.isConnected && semantics.role(element) === descriptor.role && semantics.name(element) === descriptor.name) {
-        return { element, recovered: true };
-      }
-    }
+    // Duplicates carry an index in the descriptor; legacy refs without one
+    // refuse to guess rather than mis-clicking the first match.
+    const recovered = recoverRef(semantics.candidates(), semantics.role.bind(semantics), semantics.name.bind(semantics), descriptor);
+    if (recovered?.isConnected) return { element: recovered, recovered: true };
     throw error;
   }
 }
@@ -261,6 +260,13 @@ async function fillForm(input = {}) {
         setter?.call(element, checked);
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
+      } else if (element.getAttribute?.('role') === 'radio') {
+        // Google Forms uses div[role="radio"], not native <input type="radio">.
+        // A radio cannot be unchecked — selecting it checks it.
+        element.setAttribute('aria-checked', 'true');
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+        element.click(); // trigger Google Forms internal handler
       } else {
         setValue(element, value == null ? '' : String(value));
       }

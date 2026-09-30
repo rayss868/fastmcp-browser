@@ -129,9 +129,7 @@ async function callPage(tabId, method, params, attempt = 0) {
       if (name === 'browser_pointer_move') return engine.pointer({ ...input, type: 'pointermove' });
       if (name === 'browser_pointer_click') return engine.pointer({ ...input, type: 'pointerclick' });
       if (name === 'browser_pointer_drag') {
-        engine.pointer({ ...input.from, type: 'pointerdown', buttons: 1 });
-        engine.pointer({ ...input.to, type: 'pointermove', buttons: 1 });
-        return engine.pointer({ ...input.to, type: 'pointerup' });
+        return engine.pointer({ ...input, type: 'pointerdrag' });
       }
       throw Object.assign(new Error(`Unsupported page method: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
     },

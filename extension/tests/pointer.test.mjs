@@ -39,8 +39,18 @@ test('pointer resolves element refs and interpolates drag', () => {
   const result = controller.drag({ from: { ref: 'canvas' }, to: { x: 100, y: 90 }, revision: 3, steps: 4 });
   assert.deepEqual(result.from, { x: 60, y: 50 });
   assert.deepEqual(result.to, { x: 100, y: 90 });
-  assert.equal(result.events.length, 6);
+  assert.equal(result.events.length, 12);
   assert.equal(events.filter(event => event.type === 'pointermove').length, 4);
+  assert.equal(events.filter(event => event.type === 'mousemove').length, 4);
+});
+
+test('pointer drag emits mouse-compatible sequence for sliders', () => {
+  const { controller, events } = fixture();
+  controller.drag({ from: { x: 40, y: 50 }, to: { x: 100, y: 90 }, steps: 4 });
+  const types = events.map(event => event.type);
+  assert.ok(types.includes('mousedown'), `missing mousedown in ${types.join(',')}`);
+  assert.ok(types.includes('mousemove'), `missing mousemove in ${types.join(',')}`);
+  assert.ok(types.includes('mouseup'), `missing mouseup in ${types.join(',')}`);
 });
 
 test('pointer rejects stale refs and invalid coordinates', () => {

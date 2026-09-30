@@ -57,13 +57,19 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     refs.reset();
     const limit = Number(options.limit) || 0;
     const elements = [];
+    const seenCounts = new Map();
     for (const element of semantics.candidates()) {
       if (!matchesScope(element, options)) continue;
       const tag = element.tagName.toLowerCase();
       const role = semantics.role(element);
       const name = semantics.name(element);
+      // Position among earlier candidates with the same role+name lets a stale
+      // ref recover to the right duplicate (e.g. which Likert radio "4") instead
+      // of always landing on the first match.
+      const index = seenCounts.get(`${role}|${name}`) ?? 0;
+      seenCounts.set(`${role}|${name}`, index + 1);
       const item = {
-        ref: refs.refFor(element, 'e', { role, name }),
+        ref: refs.refFor(element, 'e', { role, name, index }),
         role,
         name,
         visible: true,

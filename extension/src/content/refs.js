@@ -40,6 +40,21 @@ export function createReferenceStore() {
   };
 }
 
+export function recoverRef(candidates, roleOf, nameOf, descriptor) {
+  if (!descriptor) return null;
+  const matches = [];
+  for (const element of candidates) {
+    if (roleOf(element) === descriptor.role && nameOf(element) === descriptor.name) matches.push(element);
+  }
+  if (matches.length === 1) return matches[0];
+  // Duplicates (Google Forms Likert radios all named "4"): without a stored
+  // index any pick is a guess — clicking the first one silently acted on the
+  // wrong question, so refuse instead of mis-clicking. Callers then surface
+  // ELEMENT_NOT_FOUND and a fresh snapshot exposes the new refs.
+  if (matches.length > 1) return descriptor.index != null ? (matches[descriptor.index] ?? null) : null;
+  return null;
+}
+
 export function boundingBox(element) {
   const rect = element.getBoundingClientRect();
   return {

@@ -41,6 +41,15 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     }));
   }
 
+  function dispatchMouse(element, type, x, y, buttons = 0) {
+    element.dispatchEvent(new MouseEvent(type, {
+      bubbles: true,
+      clientX: x,
+      clientY: y,
+      buttons
+    }));
+  }
+
   function move(input) {
     const selected = target(input);
     const coordinate = selected ? { x: selected.x, y: selected.y } : point(input);
@@ -72,6 +81,8 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     const events = [];
     dispatch(startElement, 'pointerdown', start.x, start.y, 1);
     events.push('pointerdown');
+    dispatchMouse(startElement, 'mousedown', start.x, start.y, 1);
+    events.push('mousedown');
     for (let index = 1; index <= steps; index += 1) {
       const progress = index / steps;
       const x = start.x + (end.x - start.x) * progress;
@@ -79,9 +90,13 @@ export function createPointerController({ documentRef, windowRef, refs }) {
       const element = documentRef.elementFromPoint(x, y) ?? endElement;
       dispatch(element, 'pointermove', x, y, 1);
       events.push('pointermove');
+      dispatchMouse(element, 'mousemove', x, y, 1);
+      events.push('mousemove');
     }
     dispatch(endElement, 'pointerup', end.x, end.y);
     events.push('pointerup');
+    dispatchMouse(endElement, 'mouseup', end.x, end.y);
+    events.push('mouseup');
     return { from: { x: start.x, y: start.y }, to: { x: end.x, y: end.y }, events };
   }
 
