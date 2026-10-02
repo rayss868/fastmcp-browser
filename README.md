@@ -12,6 +12,12 @@
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
 - **Tests**: server 53/53, extension 81/81, build green for Chromium + Firefox
 
+## Teaser
+
+<video src="docs/fastmcp-browser-promo.mp4" poster="docs/promo-poster.jpg" controls muted width="960" alt="FastMCP Browser 30-second teaser: an AI client drives a real, logged-in browser through the MCP bridge"></video>
+
+A 30-second walkthrough (1080p): the AI client connects over stdio, the extension joins the loopback bridge, and a live session runs `browser_open` → `browser_snapshot` → `browser_fill` → `browser_click` in the real browser profile.
+
 ---
 
 ## Why not Playwright MCP?
@@ -270,6 +276,8 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ├── README.md
 ├── docs/
 │   ├── banner.png                      # README hero
+│   ├── fastmcp-browser-promo.mp4       # README teaser (30s, 1080p)
+│   ├── promo-poster.jpg                # teaser poster frame
 │   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
