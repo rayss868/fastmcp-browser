@@ -14,9 +14,9 @@
 
 ## Teaser
 
-<video src="docs/fastmcp-browser-promo.mp4" poster="docs/promo-poster.jpg" controls muted width="960" alt="FastMCP Browser 30-second teaser: an AI client drives a real, logged-in browser through the MCP bridge"></video>
+![FastMCP Browser teaser](docs/teaser.gif)
 
-A 30-second walkthrough (1080p): the AI client connects over stdio, the extension joins the loopback bridge, and a live session runs `browser_open` → `browser_snapshot` → `browser_fill` → `browser_click` in the real browser profile.
+A 30-second walkthrough (1080p): the AI client connects over stdio, the extension joins the loopback bridge, and a live session runs `browser_open` → `browser_snapshot` → `browser_fill` → `browser_click` in the real browser profile. → **[Watch the full 1080p clip with sound](docs/fastmcp-browser-promo.mp4)**
 
 ---
 
@@ -276,8 +276,9 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ├── README.md
 ├── docs/
 │   ├── banner.png                      # README hero
-│   ├── fastmcp-browser-promo.mp4       # README teaser (30s, 1080p)
-│   ├── promo-poster.jpg                # teaser poster frame
+│   ├── teaser.gif                      # README teaser (10s loop, embeds inline)
+│   ├── fastmcp-browser-promo.mp4       # full teaser (30s, 1080p, with sound)
+│   ├── promo-poster.jpg                # poster frame
 │   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
