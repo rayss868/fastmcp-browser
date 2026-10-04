@@ -10,6 +10,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Private local research
+docs/research-browser-automation.md
+
 # Logs & local env
 *.log
 .env

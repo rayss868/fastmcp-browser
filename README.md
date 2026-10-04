@@ -71,7 +71,7 @@ Context vs the wider MCP browser landscape:
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
 | Schema footprint (all tools) | **~10k tokens / 32 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
-| Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 (see [docs/research-browser-automation.md](docs/research-browser-automation.md)) |
+| Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
 
@@ -278,8 +278,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   ├── banner.png                      # README hero
 │   ├── teaser.gif                      # README teaser (10s loop, embeds inline)
 │   ├── fastmcp-browser-promo.mp4       # full teaser (30s, 1080p, with sound)
-│   ├── promo-poster.jpg                # poster frame
-│   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
+│   └── promo-poster.jpg                # poster frame
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
 │   ├── tests/      # 54 tests
@@ -297,10 +296,6 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 - `browser_network` observes live requests per tab using the WebExtensions `webRequest` API, including request/response headers and available upload-body data. Firefox also captures up to 64 KB of text response body per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted; upload data is limited to 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified. The buffer clears when a tab closes or the extension background process restarts.
 - **No headless / browser launching** — it automates browsers that are already running.
 - Screenshot output is PNG (raster). By default it captures the visible viewport; set `fullPage: true` on `browser_screenshot` to scroll and stitch the entire page into one PNG. This does not produce vector output.
-
-## More
-
-- [docs/research-browser-automation.md](docs/research-browser-automation.md) — full landscape research & comparison notes
 
 ## License
 
