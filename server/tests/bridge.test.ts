@@ -167,6 +167,70 @@ test('bridge keeps every connected instance and lists them', async () => {
   }
 });
 
+test('bridge tracks per-profile window focus as it changes', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token');
+  const sockets: WebSocket[] = [];
+  let peer: WebSocket | undefined;
+  try {
+    const a = await connectIdentity(port, 'test-token', { instanceId: 'i-a', focused: false, focusedWindowId: null });
+    const b = await connectIdentity(port, 'test-token', { instanceId: 'i-b', focused: true, focusedWindowId: 7 });
+    sockets.push(a, b);
+
+    const peerReady = new Promise<Record<string, unknown>>((resolve, reject) => {
+      peer = new WebSocket(`ws://127.0.0.1:${port}`);
+      peer.once('open', () => peer?.send(JSON.stringify({ type: 'handshake', token: 'test-token', role: 'peer' })));
+      peer.once('message', raw => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (message.type === 'handshake_ok') resolve(message);
+        else reject(new Error('peer handshake failed'));
+      });
+      peer.once('error', reject);
+    });
+    const peerHandshake = await peerReady;
+    assert.ok(Array.isArray(peerHandshake.instances));
+
+    const byId = () => Object.fromEntries(bridge.instances().map(instance => [instance.id, instance]));
+    assert.equal(byId()['i-a'].focused, false, 'i-a should report as unfocused at handshake');
+    assert.equal(byId()['i-b'].focused, true, 'i-b should report as focused at handshake');
+    assert.equal(byId()['i-b'].focusedWindowId, 7);
+
+    a.send(JSON.stringify({ type: 'event', method: 'window.focus', params: { focused: true, focusedWindowId: 5 } }));
+    b.send(JSON.stringify({ type: 'event', method: 'window.focus', params: { focused: false, focusedWindowId: null } }));
+    await wait(30);
+
+    assert.equal(byId()['i-a'].focused, true, 'window.focus must mark i-a focused');
+    assert.equal(byId()['i-a'].focusedWindowId, 5);
+    assert.equal(byId()['i-b'].focused, false, 'window.focus must clear i-b focus');
+    assert.equal(byId()['i-b'].focusedWindowId, null);
+
+    const peerUpdates = new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('peer did not receive the updated instance snapshot')), 1000);
+      peer?.on('message', raw => {
+        const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+        if (message.type !== 'event' || message.method !== 'bridge.instances') return;
+        clearTimeout(timer);
+        resolve(message.params as Record<string, unknown>);
+      });
+    });
+    a.send(JSON.stringify({ type: 'event', method: 'window.focus', params: { focused: true, focusedWindowId: 6 } }));
+    const peerParams = await peerUpdates;
+    const peerInstances = peerParams.instances as Array<{ id: string; focused?: boolean; focusedWindowId?: number | null }>;
+    assert.equal(peerInstances.find(instance => instance.id === 'i-a')?.focused, true);
+    assert.equal(peerInstances.find(instance => instance.id === 'i-a')?.focusedWindowId, 6);
+
+    // Focus is reported only; ambiguous routing still must not auto-pick the focused one.
+    await assert.rejects(
+      bridge.request('browser_tabs'),
+      error => (error as { code?: string }).code === 'INSTANCE_REQUIRED'
+    );
+  } finally {
+    for (const socket of sockets) socket.close();
+    peer?.close();
+    await bridge.close();
+  }
+});
+
 test('bridge requires a selector or a pin when several instances are connected', async () => {
   const port = nextPort++;
   const bridge = createBridge(port, 'test-token');
@@ -359,6 +423,8 @@ test('bridge captures the structured identity from a handshake', async () => {
       language: 'en-US',
       tabs: 4,
       windows: 2,
+      focused: true,
+      focusedWindowId: 42,
       activeTab: { title: 'Inbox', url: 'https://mail.test/' }
     });
     const [instance] = bridge.instances();
@@ -371,6 +437,8 @@ test('bridge captures the structured identity from a handshake', async () => {
     assert.equal(instance.language, 'en-US');
     assert.equal(instance.tabs, 4);
     assert.equal(instance.windows, 2);
+    assert.equal(instance.focused, true);
+    assert.equal(instance.focusedWindowId, 42);
     assert.deepEqual(instance.hint, { title: 'Inbox', url: 'https://mail.test/' });
   } finally {
     socket?.close();

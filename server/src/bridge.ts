@@ -15,6 +15,8 @@ export type InstanceInfo = {
   language?: string;
   tabs?: number;
   windows?: number;
+  focused?: boolean;
+  focusedWindowId?: number | null;
 };
 
 export type BrowserBridge = {
@@ -39,6 +41,8 @@ type Connection = {
   language?: string;
   tabs?: number;
   windows?: number;
+  focused?: boolean;
+  focusedWindowId?: number | null;
 };
 
 export type RouteSelector = { instance?: string; browser?: string; profile?: string };
@@ -76,7 +80,9 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
       platform: connection.platform,
       language: connection.language,
       tabs: connection.tabs,
-      windows: connection.windows
+      windows: connection.windows,
+      focused: connection.focused,
+      focusedWindowId: connection.focusedWindowId
     }));
   }
 
@@ -160,7 +166,9 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
             platform: identity && typeof identity.platform === 'string' ? identity.platform : undefined,
             language: identity && typeof identity.language === 'string' ? identity.language : undefined,
             tabs: identity && typeof identity.tabs === 'number' ? identity.tabs : undefined,
-            windows: identity && typeof identity.windows === 'number' ? identity.windows : undefined
+            windows: identity && typeof identity.windows === 'number' ? identity.windows : undefined,
+            focused: identity && typeof identity.focused === 'boolean' ? identity.focused : undefined,
+            focusedWindowId: identity && (typeof identity.focusedWindowId === 'number' || identity.focusedWindowId === null) ? identity.focusedWindowId as number | null : undefined
           });
           if (!activeSocket || activeSocket.readyState !== 1 || activeId === id) {
             activeSocket = candidate;
@@ -191,6 +199,17 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
           return;
         }
         if (message.type === 'event' && typeof message.method === 'string') {
+          if (message.method === 'window.focus') {
+            const connection = connections.find(item => item.socket === candidate);
+            if (connection) {
+              const params = message.params as { focused?: unknown; focusedWindowId?: unknown } | undefined;
+              if (params && typeof params.focused === 'boolean') connection.focused = params.focused;
+              if (params && (typeof params.focusedWindowId === 'number' || params.focusedWindowId === null)) {
+                connection.focusedWindowId = params.focusedWindowId as number | null;
+              }
+              broadcastInstances();
+            }
+          }
           const event: EventMessage = { method: message.method, params: message.params };
           for (const listener of listeners) listener(event);
           for (const peer of peerSockets) if (peer !== candidate) peer.send(raw);

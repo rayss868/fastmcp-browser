@@ -2,7 +2,7 @@ import { createCommandRouter } from './router.js';
 import { createPageEvaluator } from './evaluate.js';
 import { captureFullPage } from './screenshot.js';
 import { createNetworkMonitor } from './network-monitor.js';
-import { detectBrowser, createSessionManager, bridgeIdentity } from './session.js';
+import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity } from './session.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
 const PORT = 9229;
@@ -19,6 +19,7 @@ const browser = detectBrowser(typeof navigator === 'undefined' ? '' : navigator.
   brave: Boolean(globalThis.navigator?.brave)
 });
 const session = createSessionManager({ api, browser });
+const focus = createFocusTracker(api);
 
 async function attachSession(method, result) {
   if (method === 'browser_open') {
@@ -383,7 +384,7 @@ function start() {
   socket = new WebSocket(`ws://127.0.0.1:${PORT}`);
   socket.onopen = async () => {
     connected = false;
-    const bridge = await bridgeIdentity(api, browser, session);
+    const bridge = await bridgeIdentity(api, browser, session, focus);
     identity = bridge.identity;
     send(socket, { type: 'handshake', token: await token(), browser: api.runtime.getManifest().name, ...bridge });
   };
@@ -420,11 +421,15 @@ api.tabs.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
+api.windows?.onFocusChanged?.addListener(() => {
+  emit('window.focus', { focused: focus.focused, focusedWindowId: focus.windowId });
+});
+
 api.runtime.onMessage?.addListener(async message => {
   if (message?.method === 'status.get') {
     const info = await session.reconcile();
     router.adopt(info.tabIds);
-    if (!identity) identity = (await bridgeIdentity(api, browser, session)).identity;
+    if (!identity) identity = (await bridgeIdentity(api, browser, session, focus)).identity;
     return {
       connected,
       instance: identity,

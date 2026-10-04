@@ -33,11 +33,11 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (32 MCP browser tools).
 
-            ### What's new in v0.4.1
+            ### What's new in v0.4.2
 
-            - **Security fix: browser tools are now sandboxed to the "Automation" tab group.** `browser_tabs` only ever lists tabs inside the session group and authorizes exactly that set; any tool that used to enumerate or target tabs outside the group no longer can. A tab dragged out of the group immediately loses authorization (the authorized set is replaced, not accumulated), so the bridge can no longer read, click, or type on tabs the session does not own.
-            - **The identity hint is group-scoped too.** The `activeTab` hint reported by `browser_instances` is now derived from group tabs only; if the group has no active tab, the hint is omitted. No tab outside the group is exposed through the bridge anymore.
-            - **Housekeeping** — removed the now-redundant `browser_tabs` reconcile in the session attach path (authorization is derived once from the group); added regression tests for group-only listing, hint sandboxing, and authorization replacement.
+            - **Per-profile focus reporting.** `browser_instances` reports whether each connected browser profile currently has an OS-focused window and its window ID. Each extension instance reports its own profile's focus state; the bridge aggregates live updates and broadcasts them to peer bridges.
+            - **Focus is informational only.** It does not automatically route commands. When multiple profiles are connected, select a profile or instance explicitly; otherwise the bridge returns `INSTANCE_REQUIRED`.
+            - **Race-safe focus updates.** A delayed initial window-focus query cannot overwrite a newer focus-change event.
 
             ### Install
 

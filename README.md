@@ -10,7 +10,7 @@
 
 - **32 MCP tools**, full schema footprint ≈ **10k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 53/53, extension 81/81, build green for Chromium + Firefox
+- **Tests**: server 54/54, extension 90/90, build green for Chromium + Firefox
 
 ## Teaser
 
@@ -248,8 +248,8 @@ The extension popup displays detected capabilities per browser profile:
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 53 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 81 session/router/bridge/network/screenshot/build tests
+cd server   && npm test    # build + 54 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 90 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -282,12 +282,12 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   └── research-browser-automation.md  # landscape research (Playwright MCP, CDP, extension MCPs)
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
-│   ├── tests/      # 53 tests
+│   ├── tests/      # 54 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 81 tests
+    ├── tests/      # 90 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 

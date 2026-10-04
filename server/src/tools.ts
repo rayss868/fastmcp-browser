@@ -87,7 +87,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
   browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
   browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected. Return only the small set of values you need (pick fields, count, boolean) — avoid dumping large DOM subtrees or whole documents; results can reach 1 MB and will slow the session.',
-  browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, and which instance the bridge currently routes session commands to.',
+  browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, which profile currently has OS window focus, and which instance the bridge currently routes session commands to. Use `focused` to see which profile the user is looking at; focus is informational only and does not change routing, so select an instance explicitly when multiple profiles are connected.',
   browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
   browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.'
 };

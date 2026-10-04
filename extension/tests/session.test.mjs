@@ -348,6 +348,62 @@ test('bridgeIdentity reports a structured profile identity', async () => {
   assert.equal(hint?.title, 'Inbox');
 });
 
+test('createFocusTracker follows window focus changes and window-id-none clears focus', async () => {
+  const { createFocusTracker } = await import('../src/session.js');
+  const listeners = [];
+  const windows = {
+    getLastFocused: async () => ({ id: 3, focused: true }),
+    onFocusChanged: { addListener: fn => listeners.push(fn) }
+  };
+  const tracker = createFocusTracker({ windows });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(tracker.focused, true);
+  assert.equal(tracker.windowId, 3);
+
+  listeners.forEach(fn => fn(5));
+  assert.equal(tracker.focused, true);
+  assert.equal(tracker.windowId, 5, 'a real window id marks that window focused');
+
+  listeners.forEach(fn => fn(-1));
+  assert.equal(tracker.focused, false, 'WINDOW_ID_NONE must clear focus');
+  assert.equal(tracker.windowId, null);
+});
+
+test('createFocusTracker does not overwrite a newer focus event with its initial query', async () => {
+  const { createFocusTracker } = await import('../src/session.js');
+  const listeners = [];
+  let resolveLastFocused;
+  const windows = {
+    getLastFocused: () => new Promise(resolve => { resolveLastFocused = resolve; }),
+    onFocusChanged: { addListener: fn => listeners.push(fn) }
+  };
+  const tracker = createFocusTracker({ windows });
+
+  listeners.forEach(fn => fn(-1));
+  resolveLastFocused({ id: 3, focused: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(tracker.focused, false, 'a stale initial query must not restore focus');
+  assert.equal(tracker.windowId, null);
+});
+
+test('bridgeIdentity reports the focused state from the focus tracker', async () => {
+  const { bridgeIdentity } = await import('../src/session.js');
+  const storage = createStorage();
+  const api = {
+    storage,
+    tabs: { query: async () => [{ id: 1, active: true, title: 'Inbox', url: 'https://mail.test/', windowId: 3 }] }
+  };
+  const focus = { focused: true, windowId: 3 };
+  const { identity } = await bridgeIdentity(api, { family: 'chromium', brand: 'Chrome' }, undefined, focus);
+  assert.equal(identity.focused, true, 'identity must expose the tracker focused flag');
+  assert.equal(identity.focusedWindowId, 3);
+
+  const unfocused = await bridgeIdentity(api, { family: 'chromium', brand: 'Chrome' }, undefined, { focused: false, windowId: null });
+  assert.equal(unfocused.identity.focused, false);
+  assert.equal(unfocused.identity.focusedWindowId, null);
+});
+
 test('bridgeIdentity sandboxes the active tab hint to the session group', async () => {
   const { bridgeIdentity } = await import('../src/session.js');
   const api = {

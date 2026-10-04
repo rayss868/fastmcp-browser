@@ -198,7 +198,7 @@ function browserVersion(userAgent = '') {
   return match ? match[1] : undefined;
 }
 
-export async function bridgeIdentity(api, browser = { family: 'chromium', brand: 'Unknown' }, session) {
+export async function bridgeIdentity(api, browser = { family: 'chromium', brand: 'Unknown' }, session, focus) {
   const area = api.storage.local;
   const stored = await area.get(['fastmcpInstance', 'fastmcpInstanceLabel']);
   let instanceId = stored.fastmcpInstance;
@@ -234,7 +234,48 @@ export async function bridgeIdentity(api, browser = { family: 'chromium', brand:
     language: typeof nav.language === 'string' ? nav.language : undefined,
     tabs,
     windows,
+    focused: focus ? Boolean(focus.focused) : undefined,
+    focusedWindowId: focus ? focus.windowId : undefined,
     activeTab: hint
   };
   return { instanceId, hint, identity };
+}
+
+const WINDOW_ID_NONE = -1;
+
+export function createFocusTracker(api) {
+  // Focus is tracked per profile: a profile only knows about its own windows,
+  // so `windows.onFocusChanged` firing with WINDOW_ID_NONE means some window
+  // outside this profile (another profile, or a non-browser app) took focus.
+  let focusedWindowId = null;
+  let focused = false;
+  let focusChanged = false;
+
+  function readFromApi() {
+    if (typeof api.windows?.getLastFocused !== 'function') return;
+    api.windows.getLastFocused().then(win => {
+      if (focusChanged || win?.id === undefined) return;
+      focusedWindowId = win.id;
+      focused = win.focused !== false;
+    }).catch(() => {});
+  }
+
+  if (typeof api.windows?.onFocusChanged?.addListener === 'function') {
+    api.windows.onFocusChanged.addListener(windowId => {
+      focusChanged = true;
+      if (windowId === WINDOW_ID_NONE) {
+        focused = false;
+        focusedWindowId = null;
+        return;
+      }
+      focusedWindowId = windowId;
+      focused = true;
+    });
+    readFromApi();
+  }
+
+  return {
+    get focused() { return focused; },
+    get windowId() { return focusedWindowId; }
+  };
 }
