@@ -76,7 +76,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_select: 'Choose an option on a native select or an ARIA combobox/listbox (MUI Autocomplete, React Select, custom listboxes) targeted by ref (with optional revision) or selector: pass the option value or visible label; for non-native controls the listbox is opened and the matching role="option" is clicked.',
   browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value or selector/value pairs, and an optional submit ref (or submitSelector) to click afterward. Each field is re-resolved against the live DOM, so a rerender between fields is recovered automatically. Inputs, textareas, contenteditable, native selects, ARIA comboboxes, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad target does not waste the whole call. The response carries a compact DOM diff.',
   browser_act: 'One call that finds the target, acts, waits for the DOM to settle, then reports whether anything changed plus a compact diff and the element new ref — so a follow-up snapshot is usually unnecessary. Pass action (click, fill, type, press, select, hover) with a target ref or selector; stale refs are re-resolved automatically. Set waitAfter:false to skip the settle wait, or waitState:"network_idle" when the effect is network-driven.',
-  browser_inspect: 'Read the framework state behind an element by ref, resolved in the page MAIN world: returns the tag, the controlling React/Vue/Angular marker, up to 10 enclosing React component names, and the React props. Pass path to read one property of the element (e.g. "props.children"). Use it to understand what a control represents, not to act.',
+  browser_inspect: 'Read the framework state behind an element by ref or selector, resolved in the page MAIN world: returns the tag, the controlling React/Vue/Angular marker, up to 10 enclosing React component names, and the React props. Pass path to read one property of the element (e.g. "props.children"). A selector skips the ref store entirely, so it also works on pages whose CSP blocks browser_evaluate and on DOMs that rerender constantly. Use it to understand what a control represents, not to act.',
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle. Prefer browser_wait_for when you can name the condition you are waiting on.',
   browser_wait_for: 'Wait on a tab until a page condition is met instead of sleeping a fixed time: state:"visible" (default with selector) or "attached" for a selector, "text" for page text, "dom_stable" (no DOM mutations for stableMs, default 300), or "network_idle" (no recent resource activity). Survives navigations up to timeoutMs (default 30000, max 120000) and returns satisfied plus the current snapshot revision.',
@@ -171,6 +171,7 @@ const schemas: Record<string, JsonSchema> = {
     tabId: TAB_ID,
     ref: REF,
     revision: REVISION,
+    selector: SELECTOR,
     path: { type: 'string', description: 'Optional dot-path read from the resolved element (e.g. "props.children").' }
   }),
   browser_scroll: object({ tabId: TAB_ID, x: NUM, y: { type: 'number', description: 'Vertical scroll delta in CSS pixels.' } }),

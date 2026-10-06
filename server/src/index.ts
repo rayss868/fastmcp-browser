@@ -70,7 +70,7 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum settle wait in milliseconds (default 3000).'),
     stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).')
   }),
-  browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").') }),
+  browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").'), selector: z.string().optional().describe('CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale. Works on CSP-restricted pages where browser_evaluate cannot run.') }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
   browser_wait_for: z.object({

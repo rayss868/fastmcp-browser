@@ -74,3 +74,35 @@ test('recoverRef still recovers a uniquely-named element without an index', () =
   const target = recoverRef(nodes, roleOf, nameOf, { role: 'radio', name: 'Unique question label' });
   assert.equal(target, nodes[0]);
 });
+
+test('a ref resolves when the caller omits the revision', () => {
+  // refToken passes `revision ?? null` into resolve(), and null never equalled the
+  // real revision -- so every ref-based read that skipped the *optional* revision
+  // failed STALE_REF even though the element was there the whole time.
+  const refs = createReferenceStore();
+  const node = { isConnected: true };
+  const ref = refs.refFor(node, 'e', { role: 'link', name: 'Lihat Selengkapnya' });
+
+  assert.equal(refs.resolve(ref, null), node);
+  assert.equal(refs.resolve(ref, refs.revision), node);
+});
+
+test('a ref whose element was actually removed still reports the right code', () => {
+  const refs = createReferenceStore();
+  const node = { isConnected: true };
+  const ref = refs.refFor(node, 'e', { role: 'link', name: 'Lihat Selengkapnya' });
+  const revision = refs.revision;
+
+  node.isConnected = false;
+  assert.throws(() => refs.resolve(ref, revision), error => error.code === 'ELEMENT_NOT_FOUND');
+
+  // After a reset the store is empty and the revision has moved on, so the
+  // stale-ref signal is the more useful one for the caller.
+  refs.reset();
+  assert.throws(() => refs.resolve(ref, revision), error => error.code === 'STALE_REF');
+});
+
+test('an unknown ref is never resolved', () => {
+  const refs = createReferenceStore();
+  assert.throws(() => refs.resolve('e404', refs.revision), error => error.code === 'ELEMENT_NOT_FOUND');
+});

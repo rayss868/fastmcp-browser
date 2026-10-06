@@ -24,7 +24,8 @@ const state = surface?.state ?? {
   observer: null,
   quietTimer: null,
   recovered: false,
-  lastCatalog: null
+  lastCatalog: null,
+  mutations: 0
 };
 
 const pointerController = createPointerController({
@@ -541,6 +542,12 @@ function network(input = {}) {
 window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
-  state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
+  // Counting mutations instead of resetting the store is what keeps refs usable on
+  // pages with a live timer: a countdown or carousel leaves a >100ms quiet window
+  // roughly once a second, so the old debounced reset expired every ref about once
+  // a second and no click could ever resolve one. Refs are keyed by element
+  // identity and revalidated with isConnected on resolve, so churn is handled
+  // there instead of by throwing the whole store away.
+  state.observer = new MutationObserver(() => { state.mutations += 1; });
   state.observer.observe(document.documentElement, { subtree: true, childList: true });
 }
