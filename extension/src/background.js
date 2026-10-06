@@ -1,5 +1,6 @@
 import { createCommandRouter } from './router.js';
 import { createPageEvaluator } from './evaluate.js';
+import { unwrapInjectionResult } from './page-result.js';
 import { captureFullPage } from './screenshot.js';
 import { createNetworkMonitor } from './network-monitor.js';
 import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity } from './session.js';
@@ -132,21 +133,24 @@ async function callPage(tabId, method, params, attempt = 0) {
     },
     args: [method, effective]
   });
-  const value = result?.[0]?.result;
-  if (value === undefined || value === null) {
-    // A navigation between inject and execute returns no value. Retrying is safe
-    // for reads; for an action it could repeat a side effect we cannot observe, so
-    // report the unknown state instead of firing twice.
-    if (attempt < 1 && !ACTION_METHODS.has(method)) {
-      await delay(350);
-      return callPage(tabId, method, params, attempt + 1);
-    }
-    throw Object.assign(
-      new Error(`Page returned no result for ${method}; the tab may be navigating or crashed. Re-run browser_snapshot for fresh refs, then retry.`),
-      { code: 'TAB_NOT_ACCESSIBLE', retryable: !ACTION_METHODS.has(method) }
-    );
+  const outcome = unwrapInjectionResult(result);
+  if (outcome.ok) return outcome.value;
+  if (outcome.error) {
+    // A page-engine error (1 MB cap, DOM-walk failure, stale ref): show the
+    // real message instead of masking it as a navigation/crash.
+    throw Object.assign(outcome.error, { retryable: !ACTION_METHODS.has(method) });
   }
-  return value;
+  // No result and no error: a navigation between inject and execute. Retrying
+  // is safe for reads; for an action it could repeat a side effect we cannot
+  // observe, so report the unknown state instead of firing twice.
+  if (attempt < 1 && !ACTION_METHODS.has(method)) {
+    await delay(350);
+    return callPage(tabId, method, params, attempt + 1);
+  }
+  throw Object.assign(
+    new Error(`Page returned no result for ${method}; the tab may be navigating or crashed. Re-run browser_snapshot for fresh refs, then retry.`),
+    { code: 'TAB_NOT_ACCESSIBLE', retryable: !ACTION_METHODS.has(method) }
+  );
 }
 
 async function waitForPage(tabId, params) {

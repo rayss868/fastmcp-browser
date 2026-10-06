@@ -49,6 +49,7 @@ async function build(target) {
   await mkdir(resolve(out, 'src/content'), { recursive: true });
   await mkdir(resolve(out, 'adapters'), { recursive: true });
   await copyFile(resolve(source, 'background.js'), resolve(out, 'background.js'));
+  await copyFile(resolve(source, 'page-result.js'), resolve(out, 'page-result.js'));
   await copyFile(resolve(source, 'router.js'), resolve(out, 'router.js'));
   await copyFile(resolve(source, 'session.js'), resolve(out, 'session.js'));
   await copyFile(resolve(source, 'network-monitor.js'), resolve(out, 'network-monitor.js'));

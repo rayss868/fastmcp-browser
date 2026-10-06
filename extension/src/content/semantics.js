@@ -61,18 +61,26 @@ const CANDIDATE_SELECTOR = [
 
 // A top-level querySelectorAll cannot see into shadow roots, so descend into
 // every open root. Closed roots stay out of reach without the debugger API.
+// The queue is capped: heavy SPAs (Azure portal, Teams) with thousands of
+// shadow-DOM nodes could otherwise expand the walk without bound and stall
+// snapshot on a timeout that looks like a crash.
+const MAX_DEEP_QUERY_QUEUE = 50000;
+
 export function deepQueryAll(root, selector) {
   const results = [...root.querySelectorAll(selector)];
   if (!root || !root.documentElement) return results;
   const seen = new Set(results);
   const queue = [...root.querySelectorAll('*')];
-  for (let index = 0; index < queue.length; index += 1) {
+  for (let index = 0; index < queue.length && queue.length <= MAX_DEEP_QUERY_QUEUE; index += 1) {
     const shadow = queue[index].shadowRoot;
     if (!shadow) continue;
     for (const match of shadow.querySelectorAll(selector)) {
       if (!seen.has(match)) { seen.add(match); results.push(match); }
     }
-    for (const child of shadow.querySelectorAll('*')) queue.push(child);
+    for (const child of shadow.querySelectorAll('*')) {
+      if (queue.length >= MAX_DEEP_QUERY_QUEUE) break;
+      queue.push(child);
+    }
   }
   return results;
 }

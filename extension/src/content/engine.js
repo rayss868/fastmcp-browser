@@ -167,9 +167,26 @@ function finish(payload) {
 
 function snapshot(input = {}) {
   const result = discovery.snapshot(input);
-  state.lastCatalog = result.elements.map(item => (
+  // Compact format returns { text, elementCount } without an `elements` array;
+  // the old unconditional .map() crashed every compact snapshot (masked by
+  // callPage as "navigating or crashed" — the Azure-portal failures).
+  state.lastCatalog = (result.elements ?? []).map(item => (
     item.value === undefined ? { role: item.role, name: item.name } : { role: item.role, name: item.name, value: item.value }
   ));
+  // Few elements in top frame + iframes present → the UI likely renders inside
+  // an iframe; tell the caller to retry with frames: true instead of leaving
+  // them with a near-empty tree and no explanation.
+  if (!input.frames) {
+    const count = result.elementCount ?? result.elements?.length ?? 0;
+    if (count < 5) {
+      try {
+        const iframeCount = document.querySelectorAll('iframe').length;
+        if (iframeCount > 0) {
+          result.hint = `Top frame found only ${count} element(s) but the page has ${iframeCount} iframe(s) — the UI likely renders inside an iframe. Retry with frames: true to snapshot into iframes.`;
+        }
+      } catch { /* querySelectorAll unavailable in odd frames — skip hint */ }
+    }
+  }
   return result;
 }
 
