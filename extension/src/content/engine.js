@@ -2,7 +2,7 @@ import { createReferenceStore, boundingBox, recoverRef } from './refs.js';
 import { createDomSemantics, deepQueryAll, sanitizeText } from './semantics.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
-import { createStealthLayer } from './stealth.js';
+import { createStealthLayer, createActionability } from './stealth.js';
 import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
 
@@ -34,6 +34,7 @@ const pointerController = createPointerController({
 });
 
 const stealthLayer = pointerController.stealth ?? createStealthLayer({ documentRef: document, windowRef: window, refs });
+const actionability = createActionability({ documentRef: document });
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -194,6 +195,12 @@ function setValue(element, text) {
   element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+// Normalize stealth flag: true → global config, object → per-call override
+function stealthConfig(stealth) {
+  if (stealth && typeof stealth === 'object') return { ...stealthLayer.config, ...stealth };
+  return stealthLayer.config;
+}
+
 // Stealth typing: character-by-character with human timing and typo simulation
 async function setValueStealth(element, text, config) {
   element.focus?.();
@@ -285,8 +292,8 @@ async function applySelect(element, value) {
   return sanitizeText(match.textContent ?? value);
 }
 
-async function actionClick(input = {}) { const element = targetOf(input); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } return finish({ changed: true, url: location.href }); }
-async function fill(input = {}, value, stealth = false) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (stealth) { await setValueStealth(element, value, stealthLayer.config); } else { setValue(element, value); } return finish({ changed: true }); }
+async function actionClick(input = {}) { const element = targetOf(input); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await actionability.ensureActionable(element, 'click'); await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } return finish({ changed: true, url: location.href }); }
+async function fill(input = {}, value, stealth = false) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (stealth) { await actionability.ensureActionable(element, 'fill'); await setValueStealth(element, value, stealthConfig(stealth)); } else { setValue(element, value); } return finish({ changed: true }); }
 async function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); await delay(30 + Math.random() * 70); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } else { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } return finish({ changed: true }); }
 async function select(input = {}, value) { const element = targetOf(input); return finish({ changed: true, value: await applySelect(element, String(value)) }); }
 function fieldTarget(field, revision) {
@@ -419,6 +426,7 @@ async function act(input = {}) {
   if (action === 'click') {
     if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
     if (input.stealth) {
+      await actionability.ensureActionable(element, 'click');
       await pointerController.click({ ref: target.ref, selector: target.selector, revision: target.revision, stealth: true });
     } else {
       element.click();
@@ -426,7 +434,8 @@ async function act(input = {}) {
   } else if (action === 'fill' || action === 'type') {
     const value = input.value == null ? '' : String(input.value);
     if (input.stealth) {
-      await setValueStealth(element, value, stealthLayer.config);
+      await actionability.ensureActionable(element, 'fill');
+      await setValueStealth(element, value, stealthConfig(input.stealth));
     } else {
       setValue(element, value);
     }
@@ -512,7 +521,7 @@ function network(input = {}) {
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });

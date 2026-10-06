@@ -26,6 +26,7 @@ async function copyContentEngine(out) {
   const files = [
     'content/refs.js',
     'content/semantics.js',
+    'content/stealth.js',
     'content/snapshot.js',
     'content/pointer.js',
     'content/files.js',
@@ -58,6 +59,8 @@ async function build(target) {
   await copyFile(resolve(source, 'adapters/runtime.js'), resolve(out, 'adapters/runtime.js'));
   await copyFile(resolve(source, `${target === 'firefox' ? 'adapters/firefox.js' : 'adapters/chromium.js'}`), resolve(out, `adapters/${target}.js`));
   await copyContentEngine(out);
+  // Fingerprint patches run in MAIN world — keep as a standalone file.
+  await copyFile(resolve(source, 'content/fingerprint.js'), resolve(out, 'src/content/fingerprint.js'));
   await copyFile(resolve(source, 'status.js'), resolve(out, 'status.js'));
   await copyFile(resolve(extension, 'status.html'), resolve(out, 'status.html'));
   await mkdir(resolve(out, 'icons'), { recursive: true });

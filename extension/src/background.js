@@ -7,6 +7,7 @@ import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity
 const api = globalThis.browser ?? globalThis.chrome;
 const PORT = 9229;
 const contentFiles = ['src/content/engine.js'];
+const fingerprintFiles = ['src/content/fingerprint.js'];
 let socket;
 let connected = false;
 let identity;
@@ -73,6 +74,12 @@ async function token() {
 }
 
 async function inject(tabId, target = {}) {
+  // Fingerprint patches must land in MAIN world first so page JS sees them.
+  try {
+    await api.scripting.executeScript({ target: { tabId, ...target }, world: 'MAIN', files: fingerprintFiles });
+  } catch {
+    // Firefox < 128 or older Chromium may not support world: 'MAIN' — skip gracefully.
+  }
   await api.scripting.executeScript({ target: { tabId, ...target }, files: contentFiles });
 }
 
