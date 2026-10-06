@@ -1,4 +1,8 @@
+import { createStealthLayer } from './stealth.js';
+
 export function createPointerController({ documentRef, windowRef, refs }) {
+  const stealth = createStealthLayer({ documentRef, windowRef, refs });
+
   function viewport(input) {
     const width = Number(input.viewportWidth ?? windowRef.innerWidth);
     const height = Number(input.viewportHeight ?? windowRef.innerHeight);
@@ -50,12 +54,29 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     }));
   }
 
+  // Track last pointer position for stealth moves
+  let lastX = windowRef.innerWidth / 2;
+  let lastY = windowRef.innerHeight / 2;
+
   function move(input) {
     const selected = target(input);
     const coordinate = selected ? { x: selected.x, y: selected.y } : point(input);
     const element = selected?.element ?? documentRef.elementFromPoint(coordinate.x, coordinate.y);
     if (!element) throw Object.assign(new Error('Element not found at pointer coordinates.'), { code: 'ELEMENT_NOT_FOUND' });
+
+    if (input.stealth) {
+      // Async stealth move: bezier curve + wobble + overshoot
+      return stealth.humanMouse.move(lastX, lastY, coordinate.x, coordinate.y, stealth.config)
+        .then(() => {
+          lastX = coordinate.x;
+          lastY = coordinate.y;
+          return { x: coordinate.x, y: coordinate.y, target: element.tagName.toLowerCase(), stealth: true };
+        });
+    }
+
     dispatch(element, 'pointermove', coordinate.x, coordinate.y, input.buttons ?? 0);
+    lastX = coordinate.x;
+    lastY = coordinate.y;
     return { x: coordinate.x, y: coordinate.y, target: element.tagName.toLowerCase() };
   }
 
@@ -64,10 +85,24 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     const coordinate = selected ? { x: selected.x, y: selected.y } : point(input);
     const element = selected?.element ?? documentRef.elementFromPoint(coordinate.x, coordinate.y);
     if (!element) throw Object.assign(new Error('Element not found at pointer coordinates.'), { code: 'ELEMENT_NOT_FOUND' });
+
+    if (input.stealth) {
+      // Move to element with bezier, then click with human timing
+      return stealth.humanMouse.move(lastX, lastY, coordinate.x, coordinate.y, stealth.config)
+        .then(() => stealth.humanMouse.click(element, coordinate.x, coordinate.y, stealth.config))
+        .then(() => {
+          lastX = coordinate.x;
+          lastY = coordinate.y;
+          return { x: coordinate.x, y: coordinate.y, target: element.tagName.toLowerCase(), clicked: true, stealth: true };
+        });
+    }
+
     dispatch(element, 'pointermove', coordinate.x, coordinate.y);
     dispatch(element, 'pointerdown', coordinate.x, coordinate.y, 1);
     dispatch(element, 'pointerup', coordinate.x, coordinate.y);
     element.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: coordinate.x, clientY: coordinate.y }));
+    lastX = coordinate.x;
+    lastY = coordinate.y;
     return { x: coordinate.x, y: coordinate.y, target: element.tagName.toLowerCase(), clicked: true };
   }
 
@@ -77,6 +112,16 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     const startElement = start.element ?? documentRef.elementFromPoint(start.x, start.y);
     const endElement = end.element ?? documentRef.elementFromPoint(end.x, end.y);
     if (!startElement || !endElement) throw Object.assign(new Error('Drag target not found.'), { code: 'ELEMENT_NOT_FOUND' });
+
+    if (input.stealth) {
+      return stealth.humanMouse.drag(start.x, start.y, end.x, end.y, stealth.config)
+        .then(() => {
+          lastX = end.x;
+          lastY = end.y;
+          return { from: { x: start.x, y: start.y }, to: { x: end.x, y: end.y }, stealth: true };
+        });
+    }
+
     const steps = Math.max(1, Math.min(32, Number(input.steps ?? 8)));
     const events = [];
     dispatch(startElement, 'pointerdown', start.x, start.y, 1);
@@ -97,8 +142,11 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     events.push('pointerup');
     dispatchMouse(endElement, 'mouseup', end.x, end.y);
     events.push('mouseup');
+    lastX = end.x;
+    lastY = end.y;
     return { from: { x: start.x, y: start.y }, to: { x: end.x, y: end.y }, events };
   }
 
-  return { move, click, drag };
+  // Expose stealth layer for engine.js to use (typing, scroll)
+  return { move, click, drag, stealth };
 }
