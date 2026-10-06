@@ -41,7 +41,10 @@ async function copyContentEngine(out) {
       .replace(/^export /gm, '');
     chunks.push(sourceText);
   }
-  await writeFile(resolve(out, 'src/content/engine.js'), chunks.join('\n'));
+  // Each content-script injection re-runs this file in the same isolated world.
+  // Top-level const/let would collide ("already declared") on the second inject,
+  // so wrap the bundle in an IIFE and expose only the public __fastMcp handle.
+  await writeFile(resolve(out, 'src/content/engine.js'), `(() => {\n${chunks.join('\n')}\n})();\n`);
 }
 
 async function build(target) {
