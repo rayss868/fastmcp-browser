@@ -175,6 +175,47 @@ node dist/src/cli.js --help
 
 The tool name must match a known tool; the optional second argument is a JSON object of parameters. Success prints one JSON line (`{"ok":true,"result":...}`) to stdout and exits 0; failures print `{"ok":false,"error":{...}}` to stderr and exit nonzero. `FASTMCP_PORT` (default 9229), `FASTMCP_TOKEN`, and `FASTMCP_CLI_TIMEOUT_MS` (request timeout in ms) are read from the environment.
 
+### Workflow recording & replay (no AI needed)
+
+Any session driven through the MCP server can be recorded and replayed later without an AI client:
+
+```bash
+# 1. Record: point the server at a .jsonl run file (add to your MCP client's
+#    env for fastmcp-browser, then restart the client), use the browser normally.
+FASTMCP_RECORD=/tmp/login-flow.jsonl
+
+# 2. Replay the run straight through the bridge (server + extension running):
+node dist/src/cli.js replay /tmp/login-flow.jsonl
+node dist/src/cli.js replay /tmp/login-flow.jsonl --delay 500   # pause 500ms between steps
+npm run replay -- /tmp/login-flow.jsonl   # same thing
+
+# 3. Render a human-readable recap with runnable per-step commands:
+node dist/src/cli.js export /tmp/login-flow.jsonl /tmp/login-flow.md
+```
+
+Recording keeps only successful calls and normalizes session-scoped fields (`tabId`, `revision` are dropped; a snapshot `ref` is replaced by its `selector` when both were passed). Steps that still depend on a volatile `ref`, or that target a session tab (`browser_focus`, `browser_close`), are marked `"replayable": false` with a reason — re-run those steps with a selector (`CSS`, `text=`, `xpath=`) for a faithful replay. Replay stops at the first non-replayable step (`NON_REPLAYABLE_STEP`) or first failing step and reports its 1-based index. `browser_disconnect` and `browser_instances` are never recorded.
+
+### Workflow skills: record → generate → run (AI or script)
+
+A run file can be turned into a reusable automation — deterministic script or an AI-driven skill. Great for "scrape a site → save the rows to a spreadsheet".
+
+```bash
+# Record a workflow on demand (the AI can drive this itself):
+node dist/src/cli.js record start /tmp/scrape.jsonl   # ...drive the browser... 
+node dist/src/cli.js record stop
+
+# Generate a standalone runner (data-flow, loops, TSV/CSV output):
+node dist/src/cli.js export --script /tmp/scrape.jsonl run.mjs --format tsv
+node run.mjs --out data.tsv        # paste-ready for Google Sheets
+
+# Or package an opencode skill (SKILL.md + run.mjs + run.jsonl):
+node dist/src/cli.js export --skill /tmp/scrape.jsonl .opencode/skills/scrape --name scrape
+```
+
+Steps accept optional annotations — `capture` (name a dataset), `forEach`/`repeat` (loops) and `{{placeholders}}` that feed one step's result into the next — so a flat recording becomes a data-extraction workflow. The generated script inserts a `browser_wait_for` after navigations so slow pages finish loading. Full guide: [`docs/workflow-skills.md`](docs/workflow-skills.md).
+
+For dynamic sites, don't force the script: the AI can follow `run.jsonl` with the MCP tools and adapt, then re-record to refresh the skill.
+
 ## Tool reference (32)
 
 | Group | Tools |

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 
@@ -319,5 +321,257 @@ test('cli returns structured JSON when the TCP peer never speaks WebSocket', asy
   } finally {
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+async function writeRunFile(lines: Array<Record<string, unknown>>): Promise<string> {
+  const file = join(tmpdir(), `fastmcp-replay-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}.jsonl`);
+  await writeFile(file, lines.map(line => JSON.stringify(line)).join('\n') + '\n', 'utf8');
+  return file;
+}
+
+test('cli replays a run file step by step in order', async () => {
+  const port = nextPort++;
+  const seen: string[] = [];
+  const wss = await startHost(port, 'test-token', (socket, message) => {
+    seen.push(String(message.method));
+    socket.send(JSON.stringify({ id: message.id, ok: true, result: { echoed: message.method } }));
+  });
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_snapshot', params: {}, replayable: true }
+  ]);
+  try {
+    const { code, stdout, stderr } = await runCli(['replay', file], {
+      FASTMCP_PORT: String(port),
+      FASTMCP_TOKEN: 'test-token'
+    });
+    assert.equal(code, 0);
+    assert.equal(stderr, '');
+    const lines = stdout.trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(lines.length, 2);
+    assert.deepEqual(lines.map(line => [line.step, line.method]), [[1, 'browser_open'], [2, 'browser_snapshot']]);
+    assert.deepEqual(seen, ['browser_open', 'browser_snapshot']);
+  } finally {
+    await closeHost(wss);
+    await rm(file, { force: true });
+  }
+});
+
+test('cli stops replay on the first failing step with its index', async () => {
+  const port = nextPort++;
+  const wss = await startHost(port, 'test-token', (socket, message) => {
+    if (message.method === 'browser_click') {
+      socket.send(JSON.stringify({ id: message.id, ok: false, error: { code: 'STALE_REF', message: 'stale', retryable: false } }));
+    } else {
+      socket.send(JSON.stringify({ id: message.id, ok: true, result: {} }));
+    }
+  });
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_click', params: { selector: 'button' }, replayable: true }
+  ]);
+  try {
+    const { code, stdout, stderr } = await runCli(['replay', file], {
+      FASTMCP_PORT: String(port),
+      FASTMCP_TOKEN: 'test-token'
+    });
+    assert.equal(code, 1);
+    assert.equal(stdout.trim().split('\n').length, 1);
+    const body = JSON.parse(stderr.trim());
+    assert.equal(body.ok, false);
+    assert.equal(body.step, 2);
+    assert.equal(body.method, 'browser_click');
+    assert.equal(body.error.code, 'STALE_REF');
+  } finally {
+    await closeHost(wss);
+    await rm(file, { force: true });
+  }
+});
+
+test('cli stops at a step that is not replayable and reports it', async () => {
+  const port = nextPort++;
+  const seen: string[] = [];
+  const wss = await startHost(port, 'test-token', (socket, message) => {
+    seen.push(String(message.method));
+    socket.send(JSON.stringify({ id: message.id, ok: true, result: {} }));
+  });
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_focus', params: {}, replayable: false, reason: 'targets a session tab that cannot be replayed' }
+  ]);
+  try {
+    const { code, stdout, stderr } = await runCli(['replay', file], {
+      FASTMCP_PORT: String(port),
+      FASTMCP_TOKEN: 'test-token'
+    });
+    assert.equal(code, 1);
+    assert.equal(stdout.trim().split('\n').length, 1);
+    const body = JSON.parse(stderr.trim());
+    assert.equal(body.step, 2);
+    assert.equal(body.method, 'browser_focus');
+    assert.equal(body.error.code, 'NON_REPLAYABLE_STEP');
+    assert.deepEqual(seen, ['browser_open']);
+  } finally {
+    await closeHost(wss);
+    await rm(file, { force: true });
+  }
+});
+
+test('cli replay --delay pauses between steps', async () => {
+  const port = nextPort++;
+  const wss = await startHost(port, 'test-token', (socket, message) => {
+    socket.send(JSON.stringify({ id: message.id, ok: true, result: {} }));
+  });
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_snapshot', params: {}, replayable: true }
+  ]);
+  try {
+    const started = Date.now();
+    const { code } = await runCli(['replay', file, '--delay', '120'], {
+      FASTMCP_PORT: String(port),
+      FASTMCP_TOKEN: 'test-token'
+    });
+    assert.equal(code, 0);
+    assert.ok(Date.now() - started >= 100, 'replay should pause between steps');
+  } finally {
+    await closeHost(wss);
+    await rm(file, { force: true });
+  }
+});
+
+test('cli replay rejects a bad delay', async () => {
+  const file = await writeRunFile([{ method: 'browser_open', params: { url: 'https://example.com' }, replayable: true }]);
+  try {
+    const { code, stderr } = await runCli(['replay', file, '--delay', 'abc'], {
+      FASTMCP_PORT: String(nextPort++)
+    });
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(stderr).error.code, 'INVALID_ARGUMENT');
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+
+test('cli rejects a garbage run file without connecting', async () => {
+  const file = await writeRunFile([{ method: 'browser_nope', params: {} }]);
+  try {
+    const { code, stderr } = await runCli(['replay', file], {
+      FASTMCP_PORT: String(nextPort++)
+    });
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(stderr).error.code, 'INVALID_RUN_FILE');
+  } finally {
+    await rm(file, { force: true });
+  }
+});
+
+test('cli export renders a run file to Markdown', async () => {
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_fill', params: { ref: 'e9', value: 'x' }, replayable: false, reason: 'needs a selector' }
+  ]);
+  const out = `${file}.md`;
+  try {
+    const { code, stdout } = await runCli(['export', file, out]);
+    assert.equal(code, 0);
+    assert.equal(JSON.parse(stdout).result.steps, 2);
+    const md = await readFile(out, 'utf8');
+    assert.match(md, /browser_open/);
+    assert.match(md, /replay/);
+    assert.match(md, /needs a selector/);
+  } finally {
+    await rm(file, { force: true });
+    await rm(out, { force: true });
+  }
+});
+
+test('cli record start/stop/status drive the control channel', async () => {
+  const port = nextPort++;
+  const seen: CallMessage[] = [];
+  const wss = await startHost(port, 'test-token', (socket, message) => {
+    seen.push(message);
+    if (message.type === 'control') {
+      socket.send(JSON.stringify({ id: message.id, ok: true, result: { action: message.params?.action } }));
+    }
+  });
+  try {
+    const start = await runCli(['record', 'start', '/tmp/x.jsonl'], { FASTMCP_PORT: String(port), FASTMCP_TOKEN: 'test-token' });
+    assert.equal(start.code, 0);
+    assert.equal(JSON.parse(start.stdout).result.action, 'start');
+    const status = await runCli(['record', 'status'], { FASTMCP_PORT: String(port), FASTMCP_TOKEN: 'test-token' });
+    assert.equal(status.code, 0);
+    assert.equal(JSON.parse(status.stdout).result.action, 'status');
+    assert.equal(seen[0].type, 'control');
+    assert.equal(seen[0].name, 'record');
+    assert.equal(seen[0].params.file, '/tmp/x.jsonl');
+    assert.equal(seen[1].params.action, 'status');
+  } finally {
+    await closeHost(wss);
+  }
+});
+
+test('cli record with a bad action does not connect', async () => {
+  const { code, stderr } = await runCli(['record', 'nonsense'], { FASTMCP_PORT: String(nextPort++) });
+  assert.equal(code, 1);
+  assert.equal(JSON.parse(stderr).error.code, 'INVALID_ARGUMENT');
+});
+
+test('cli export --script generates a runnable module with an auto-wait', async () => {
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_evaluate', params: { expression: 'Array.from(document.querySelectorAll("h1")).map(h => ({ title: h.textContent }))' }, replayable: true, capture: 'rows' }
+  ]);
+  const out = join(tmpdir(), `fastmcp-script-${Date.now()}.mjs`);
+  try {
+    const { code, stdout } = await runCli(['export', '--script', file, out]);
+    assert.equal(code, 0);
+    assert.equal(JSON.parse(stdout).result.steps, 2);
+    const script = await readFile(out, 'utf8');
+    assert.match(script, /runWorkflow/);
+    assert.match(script, /auto-wait \(generated\)/);
+    assert.match(script, /callHost/);
+  } finally {
+    await rm(file, { force: true });
+    await rm(out, { force: true });
+  }
+});
+
+test('cli export --script refuses a non-replayable step', async () => {
+  const file = await writeRunFile([
+    { method: 'browser_click', params: { ref: 'e1' }, replayable: false, reason: 'uses a snapshot ref without a selector' }
+  ]);
+  const out = join(tmpdir(), `fastmcp-script-${Date.now()}.mjs`);
+  try {
+    const { code, stderr } = await runCli(['export', '--script', file, out]);
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(stderr).error.code, 'NON_REPLAYABLE_STEP');
+  } finally {
+    await rm(file, { force: true });
+    await rm(out, { force: true });
+  }
+});
+
+test('cli export --skill writes SKILL.md, run.mjs, and the run file', async () => {
+  const file = await writeRunFile([
+    { method: 'browser_open', params: { url: 'https://example.com' }, replayable: true },
+    { method: 'browser_evaluate', params: { expression: '[]' }, replayable: true, capture: 'rows' }
+  ]);
+  const dir = join(tmpdir(), `fastmcp-skill-${Date.now()}`);
+  try {
+    const { code, stdout } = await runCli(['export', '--skill', file, dir, '--name', 'demo', '--description', 'Do demo things']);
+    assert.equal(code, 0);
+    const body = JSON.parse(stdout).result;
+    const skill = await readFile(body.skill, 'utf8');
+    assert.match(skill, /name: demo/);
+    assert.match(skill, /Do demo things/);
+    assert.match(skill, /run\.mjs/);
+    assert.ok(body.script.endsWith('run.mjs'));
+    await readFile(body.run, 'utf8');
+    await readFile(body.script, 'utf8');
+  } finally {
+    await rm(file, { force: true });
+    await rm(dir, { recursive: true, force: true });
   }
 });

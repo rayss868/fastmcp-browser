@@ -1,6 +1,8 @@
 import type { BrowserBridge } from './bridge.js';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
+import { appendStep, normalizeStep } from './record.js';
+import { activeRecordFile } from './recorder.js';
 
 const MIME_BY_EXT: Record<string, string> = {
   '.txt': 'text/plain',
@@ -256,13 +258,37 @@ async function requestWithRecovery(bridge: BrowserBridge, name: string, params: 
   }
 }
 
+function maybeRecord(name: string, params: Record<string, unknown>): void {
+  // Recording must never break a tool call, and only successful calls are
+  // worth replaying — so this runs fire-and-forget after a call succeeds.
+  // Uploads are recorded with their original local `paths`, not the expanded
+  // base64 payload, so replay re-reads the files from disk.
+  try {
+    const file = activeRecordFile();
+    if (!file) return;
+    const step = normalizeStep(name, params);
+    if (!step) return;
+    void appendStep(file, step).catch(() => {});
+  } catch {
+    // Recording is best-effort by design.
+  }
+}
+
 export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
   if (name === 'browser_instances') return bridge.instances();
-  if (name === 'browser_use_instance') return bridge.useInstance(String(params.id ?? ''));
+  if (name === 'browser_use_instance') {
+    const result = bridge.useInstance(String(params.id ?? ''));
+    maybeRecord(name, params);
+    return result;
+  }
   if (name === 'browser_upload') {
     const { paths, ...rest } = params;
-    return bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) }, timeoutFor(name, params));
+    const result = await bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) }, timeoutFor(name, params));
+    maybeRecord(name, params);
+    return result;
   }
-  return requestWithRecovery(bridge, name, params);
+  const result = await requestWithRecovery(bridge, name, params);
+  maybeRecord(name, params);
+  return result;
 }

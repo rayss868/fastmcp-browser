@@ -27,6 +27,64 @@ function response(socket: WebSocket, id: string, result: unknown) {
   socket.send(JSON.stringify({ id, ok: true, result }));
 }
 
+async function connectPeer(port: number, token: string) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  await new Promise<void>((resolve, reject) => {
+    socket.once('open', () => resolve());
+    socket.once('error', reject);
+  });
+  socket.send(JSON.stringify({ type: 'handshake', token, role: 'peer' }));
+  await new Promise<void>((resolve, reject) => {
+    socket.once('message', raw => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'handshake_ok') resolve();
+      else reject(new Error('handshake failed'));
+    });
+    socket.once('error', reject);
+  });
+  return socket;
+}
+
+test('bridge handles a peer control message locally without the extension', async () => {
+  const port = nextPort++;
+  const seen: Array<{ name: string; params: Record<string, unknown> }> = [];
+  const bridge = createBridge(port, 'test-token', {
+    control: (name, params) => { seen.push({ name, params }); return { file: params.file, recording: true }; }
+  });
+  const socket = await connectPeer(port, 'test-token');
+  const reply = new Promise<Record<string, unknown>>(resolve => {
+    socket.on('message', raw => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (typeof message.id === 'string') resolve(message);
+    });
+  });
+  socket.send(JSON.stringify({ type: 'control', id: 'c1', name: 'record', params: { action: 'start', file: '/tmp/x.jsonl' } }));
+  const message = await reply;
+  assert.equal(message.ok, true);
+  assert.deepEqual(message.result, { file: '/tmp/x.jsonl', recording: true });
+  assert.deepEqual(seen, [{ name: 'record', params: { action: 'start', file: '/tmp/x.jsonl' } }]);
+  socket.close();
+  await bridge.close();
+});
+
+test('bridge reports an error for an unknown control name', async () => {
+  const port = nextPort++;
+  const bridge = createBridge(port, 'test-token', { control: () => { throw Object.assign(new Error('nope'), { code: 'INVALID_ARGUMENT' }); } });
+  const socket = await connectPeer(port, 'test-token');
+  const reply = new Promise<Record<string, unknown>>(resolve => {
+    socket.on('message', raw => {
+      const message = JSON.parse(raw.toString()) as Record<string, unknown>;
+      if (typeof message.id === 'string') resolve(message);
+    });
+  });
+  socket.send(JSON.stringify({ type: 'control', id: 'c2', name: 'record', params: {} }));
+  const message = await reply;
+  assert.equal(message.ok, false);
+  assert.equal((message.error as { code?: string }).code, 'INVALID_ARGUMENT');
+  socket.close();
+  await bridge.close();
+});
+
 test('bridge authenticates and routes concurrent responses', async () => {
   const port = nextPort++;
   const bridge = createBridge(port, 'test-token');
