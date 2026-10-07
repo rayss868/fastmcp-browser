@@ -31,15 +31,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (32 MCP browser tools).
+            WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (33 MCP browser tools).
 
-            ### What's new in v0.4.3
+            ### What's new in v0.4.4
 
-            - **Stealth humanize layer.** Mouse movement now follows bezier trajectories with eased velocity, typing is emitted key-by-key with human-like cadence and a per-field typo rate, and scrolling uses natural incremental steps instead of one instant jump. All of it is wired into the existing click / type / scroll tools — no new call sites needed.
-            - **Fingerprint patches.** The content engine patches the automation-detection surfaces (`navigator.webdriver`, permissions, plugin/mimeTypes arrays) so pages see a consistent, non-automation environment.
-            - **Actionability wiring.** Clicks and typing now wait for the element to actually be actionable (enabled, connected) and fail with a clear error rather than silently mis-targeting a disabled or detached control.
-            - **Snapshot robustness fixes.** Compact snapshot no longer crashes on large or deeply nested pages, errors from snapshot walks are surfaced to the caller instead of swallowed, an iframe hint is included when elements live inside frames, and the DOM walk is capped to prevent runaway traversals.
-            - **Housekeeping** — MCP server version bumped to 0.4.3; README extension test count corrected (120).
+            - **Actionable diffs.** After every action the engine returns a diff of what actually changed on the page, so agents can verify their click or typing landed instead of re-snapshotting blindly.
+            - **Auto post-action snapshot.** Actions now ship a refreshed snapshot (with new refs) in the same call — no extra `browser_snapshot` round-trip needed.
+            - **Goal ranking.** `browser_snapshot` / `browser_inventory` accept a `goal` (and `relevantOnly`) so candidates are ranked by relevance and `limit` cuts from the most relevant end instead of DOM order — long pages no longer hide the target form at the bottom.
+            - **`browser_find` tool.** Text or regex lookup that returns only the matching elements with refs, without the full tree. 33 MCP tools now.
+            - **Ref recovery fixes.** Radio fill on Google Forms, null unwrap in `browser_evaluate`, and ref recovery by duplicate index.
+            - **Housekeeping** — MCP server version bumped to 0.4.4; README extension test count corrected (144).
 
             ### Install
 
