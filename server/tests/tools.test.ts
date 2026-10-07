@@ -1,9 +1,10 @@
 import test from 'node:test';
-import { writeFile, rm } from 'node:fs/promises';
+import { writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/tools.js';
+import { startRecording, stopRecording, recordingStatus } from '../dist/src/recorder.js';
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
@@ -216,4 +217,43 @@ test('instance tools are served by the bridge without extension forwarding', asy
   assert.deepEqual(await callBrowserTool(bridge, 'browser_instances', {}), [{ id: 'i-a', active: true }]);
   assert.deepEqual(await callBrowserTool(bridge, 'browser_use_instance', { id: 'i-a' }), { active: 'i-a' });
   assert.deepEqual(forwarded, [], 'instance tools must not be forwarded to the extension');
+});
+
+async function readWhenWritten(file: string): Promise<string> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    try {
+      const text = await readFile(file, 'utf8');
+      if (text.trim()) return text;
+    } catch {
+      // Not created yet.
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('run file was never written');
+}
+
+test('callBrowserTool records successful calls when runtime recording is active', async () => {
+  const file = join(tmpdir(), `fastmcp-record-int-${Date.now()}.jsonl`);
+  const bridge = { token: 'test-token', close: async () => undefined, request: async () => ({ accepted: true }) };
+  startRecording(file);
+  try {
+    assert.equal(recordingStatus().recording, true);
+    await callBrowserTool(bridge as never, 'browser_click', { selector: 'button[data-testid=save]' });
+    const step = JSON.parse((await readWhenWritten(file)).trim().split('\n')[0]);
+    assert.equal(step.method, 'browser_click');
+    assert.equal(step.params.selector, 'button[data-testid=save]');
+    assert.equal(step.replayable, true);
+  } finally {
+    stopRecording();
+    await rm(file, { force: true });
+  }
+});
+
+test('callBrowserTool stops recording after stopRecording', async () => {
+  const file = join(tmpdir(), `fastmcp-record-off-${Date.now()}.jsonl`);
+  const bridge = { token: 'test-token', close: async () => undefined, request: async () => ({ accepted: true }) };
+  stopRecording();
+  await callBrowserTool(bridge as never, 'browser_click', { selector: 'button' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  await assert.rejects(() => readFile(file, 'utf8'));
 });

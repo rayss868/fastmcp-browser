@@ -25,14 +25,16 @@ export function createReferenceStore() {
       return descriptors.get(ref);
     },
     resolve(ref, expectedRevision) {
+      const element = refs.get(ref);
+      // Refs are keyed by element identity, so a connected element is still the
+      // exact node the caller saw. A page with a live timer (promo countdown,
+      // carousel) mutates every second and the revision drifts even though nothing
+      // moved, so the revision is only reported once the node is actually gone.
+      if (element && element.isConnected) return element;
       if (expectedRevision !== revision) {
         throw Object.assign(new Error('Snapshot is outdated.'), { code: 'STALE_REF', retryable: true });
       }
-      const element = refs.get(ref);
-      if (!element || !element.isConnected) {
-        throw Object.assign(new Error('Element not found.'), { code: 'ELEMENT_NOT_FOUND', retryable: true });
-      }
-      return element;
+      throw Object.assign(new Error('Element not found.'), { code: 'ELEMENT_NOT_FOUND', retryable: true });
     },
     clear() {
       refs.clear();

@@ -3,9 +3,26 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { createBridge } from './bridge.js';
 import { TOOL_NAMES, TOOL_DOCS, callBrowserTool } from './tools.js';
+import { recordingStatus, startRecording, stopRecording } from './recorder.js';
 
 const port = Number(process.env.FASTMCP_PORT ?? 9229);
-const bridge = createBridge(port);
+
+function handleControl(name: string, params: Record<string, unknown>): unknown {
+  if (name !== 'record') {
+    throw Object.assign(new Error(`Unknown control: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
+  }
+  const action = typeof params.action === 'string' ? params.action : '';
+  if (action === 'start') {
+    const file = params.file;
+    if (typeof file !== 'string' || !file) throw Object.assign(new Error('record start requires a file path'), { code: 'INVALID_ARGUMENT' });
+    return startRecording(file);
+  }
+  if (action === 'stop') return stopRecording();
+  if (action === 'status') return recordingStatus();
+  throw Object.assign(new Error(`Unknown record action: ${action || '(none)'}`), { code: 'INVALID_ARGUMENT' });
+}
+
+const bridge = createBridge(port, undefined, { control: handleControl });
 const server = new McpServer({ name: 'fastmcp-browser', version: '0.4.3' });
 
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
@@ -70,7 +87,7 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum settle wait in milliseconds (default 3000).'),
     stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).')
   }),
-  browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").') }),
+  browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").'), selector: z.string().optional().describe('CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale. Works on CSP-restricted pages where browser_evaluate cannot run.') }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
   browser_wait: z.object({ tabId, milliseconds: z.number().int().min(0).max(60000).describe('Pause duration in milliseconds (0-60000).') }),
   browser_wait_for: z.object({

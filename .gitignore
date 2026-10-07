@@ -17,3 +17,8 @@ docs/research-browser-automation.md
 *.log
 .env
 .env.*
+
+# Local workflow recordings (FASTMCP_RECORD)
+*.jsonl
+record-test.md
+out/

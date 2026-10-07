@@ -21,8 +21,6 @@ const discovery = createSnapshotEngine({
 const state = surface?.state ?? {
   get revision() { return refs.revision; },
   refs,
-  observer: null,
-  quietTimer: null,
   recovered: false,
   lastCatalog: null
 };
@@ -37,10 +35,6 @@ const stealthLayer = pointerController.stealth ?? createStealthLayer({ documentR
 const actionability = createActionability({ documentRef: document });
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-
-function resetRefs() {
-  refs.reset();
-}
 
 function locate(ref, revision) {
   try {
@@ -539,8 +533,3 @@ function network(input = {}) {
 }
 
 window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
-if (!state.observer) {
-  // Re-injection would otherwise stack one observer per MCP call.
-  state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
-  state.observer.observe(document.documentElement, { subtree: true, childList: true });
-}
