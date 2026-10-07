@@ -104,6 +104,7 @@ async function callPage(tabId, method, params, attempt = 0) {
       const engine = globalThis.__fastMcp;
       if (!engine) throw Object.assign(new Error('Page engine unavailable'), { code: 'TAB_NOT_ACCESSIBLE' });
       if (name === 'browser_snapshot') return engine.snapshot(input);
+      if (name === 'browser_find') return engine.find(input);
       if (name === 'browser_inventory') return engine.inventory(input);
       if (name === 'browser_click') return engine.actionClick(input);
       if (name === 'browser_fill') return engine.fill(input, input.value);
@@ -369,7 +370,7 @@ async function visualSnapshot(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload'];
+  const pageMethods = ['browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload'];
   if (method === 'browser_wait_for') return waitForPage(Number(params.tabId), params);
   if (method === 'browser_snapshot' && params.frames === true) return snapshotFrames(Number(params.tabId), params);
   if (method === 'browser_snapshot' && params.mode === 'visual') return visualSnapshot(params);

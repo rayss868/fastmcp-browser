@@ -1,5 +1,6 @@
 const PAGE_METHODS = new Set([
   'browser_snapshot',
+  'browser_find',
   'browser_inventory',
   'browser_click',
   'browser_fill',

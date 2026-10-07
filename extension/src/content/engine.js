@@ -4,6 +4,7 @@ import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
 import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
+import { computeDiff, shouldRefresh } from './diff.js';
 
 // The content script is re-injected at the start of every MCP call. Reuse the
 // surface from a previous injection so a ref from an earlier snapshot stays
@@ -117,43 +118,11 @@ function box(element) {
   return boundingBox(element);
 }
 
-function catalogKey(item) {
-  return `${item.role}|${item.name}`;
-}
-
-function computeDiff(before, after) {
-  const beforeCounts = new Map();
-  for (const item of before) beforeCounts.set(catalogKey(item), (beforeCounts.get(catalogKey(item)) ?? 0) + 1);
-  const afterCounts = new Map();
-  for (const item of after) afterCounts.set(catalogKey(item), (afterCounts.get(catalogKey(item)) ?? 0) + 1);
-  const added = [];
-  const removed = [];
-  const changed = [];
-  for (const [key, count] of afterCounts) {
-    if (count > (beforeCounts.get(key) ?? 0)) added.push(key);
-  }
-  for (const [key, count] of beforeCounts) {
-    if (count > (afterCounts.get(key) ?? 0)) removed.push(key);
-  }
-  const previousValues = new Map(before.map(item => [catalogKey(item), item.value]));
-  const seen = new Set();
-  for (const item of after) {
-    const key = catalogKey(item);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (previousValues.has(key) && previousValues.get(key) !== item.value) {
-      changed.push({ key, from: previousValues.get(key), to: item.value });
-    }
-  }
-  const capped = list => list.slice(0, 20);
-  return { added: capped(added), removed: capped(removed), changed: capped(changed) };
-}
-
 function refreshCatalog() {
-  const after = discovery.catalog({ limit: 400 });
+  const after = discovery.catalogEntries({ limit: 400 });
   const before = state.lastCatalog;
   state.lastCatalog = after;
-  return before ? computeDiff(before, after) : null;
+  return before ? computeDiff(before, after, refs) : null;
 }
 
 function finish(payload) {
@@ -364,14 +333,25 @@ function resolveTarget(target) {
 // One primitive that finds the target, acts, re-resolves when the node was
 // replaced, waits for the DOM to settle, then reports the new ref and a diff so
 // the caller usually does not need a fresh snapshot.
+//
+// `refresh` decides how much page state comes back with the action:
+//   'auto'     (default) attach a compact snapshot only when the diff says the
+//              page actually moved under us — navigation, the acted-on element
+//              disappearing, or a large churn the diff alone cannot describe.
+//   'snapshot' always attach one (costs tokens, saves a round-trip).
+//   'none'     refs in the diff only.
+// The snapshot is taken with keepRefs so refs already in the caller's hand stay
+// valid instead of being invalidated by the very call that returned them.
 async function act(input = {}) {
   const action = String(input.action ?? 'click');
+  const refreshMode = String(input.refresh ?? 'auto');
   const target = {
     ref: input.target?.ref ?? input.ref ?? null,
     selector: input.target?.selector ?? input.selector ?? null,
     revision: input.target?.revision ?? input.revision
   };
-  const before = discovery.catalog({ limit: 400 });
+  const urlBefore = location.href;
+  const before = discovery.catalogEntries({ limit: 400 });
   const { element, recovered } = resolveTarget(target);
   if (recovered) state.recovered = true;
 
@@ -398,17 +378,36 @@ async function act(input = {}) {
     settled = await waitFor({ state: input.waitState ?? 'dom_stable', timeoutMs: input.timeoutMs ?? 3000, stableMs: input.stableMs ?? 150 });
   }
 
-  const after = discovery.catalog({ limit: 400 });
+  const after = discovery.catalogEntries({ limit: 400 });
   state.lastCatalog = after;
-  const diff = computeDiff(before, after);
+  const diff = computeDiff(before, after, refs);
   const changed = diff.added.length + diff.removed.length + diff.changed.length > 0;
   const nextRef = element.isConnected && typeof element.tagName === 'string'
     ? refs.refFor(element, 'e', { role: semantics.role(element), name: semantics.name(element) })
     : null;
+
+  // The diff is enough while the page held still and the acted-on element is
+  // still there. Anything else means the model is now looking at a page it has
+  // never seen, so hand it one rather than making it ask again.
+  const wantsSnapshot = shouldRefresh({
+    mode: refreshMode,
+    navigated: location.href !== urlBefore,
+    targetGone: nextRef === null,
+    churn: diff.added.length + diff.removed.length
+  });
+  let refreshed = null;
+  if (wantsSnapshot) {
+    // The compact payload carries `text`, not `elements`; nothing changed
+    // between the catalog pass above and this snapshot, so `state.lastCatalog`
+    // already holds the baseline for the next diff.
+    refreshed = discovery.snapshot({ keepRefs: true, format: 'compact', limit: 150 });
+  }
+
   const result = { changed, action, revision: state.revision, ref: nextRef, diff };
   if (detail !== null) result.value = detail;
   if (settled) result.settled = settled.satisfied;
   if (state.recovered) { result.recovered = true; state.recovered = false; }
+  if (refreshed) result.snapshot = refreshed;
   return result;
 }
 
@@ -436,12 +435,16 @@ function upload(input = {}, files) {
   return finish({ changed: true, count: element.files.length });
 }
 
+function find(input = {}) {
+  return discovery.find(input);
+}
+
 function network(input = {}) {
   const entries = typeof performance.getEntriesByType === 'function' ? performance.getEntriesByType('resource') : [];
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });

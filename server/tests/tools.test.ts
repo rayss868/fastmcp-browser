@@ -7,7 +7,7 @@ import { callBrowserTool, getToolDefinitions, TOOL_NAMES } from '../dist/src/too
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 32);
+  assert.equal(TOOL_NAMES.length, 33);
 });
 
 test('browser_fill_form batches fields and an optional submit in one call', () => {

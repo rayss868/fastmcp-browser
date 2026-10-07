@@ -53,13 +53,61 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     return true;
   }
 
+  // Rank candidates against what the caller is actually trying to do. DOM order
+  // is the worst possible order for a long page: the header and nav sit first and
+  // a `limit` then truncates away the form at the bottom, so the model never sees
+  // its target. Scoring lets `limit` cut from the most relevant end instead.
+  function relevanceScorer(options) {
+    const raw = options.goal
+      ?? (Array.isArray(options.keywords) ? options.keywords.join(' ') : options.keywords ?? '');
+    const terms = String(raw).toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 2);
+    if (terms.length === 0) return null;
+    // Only rank-break interactive controls that already matched: awarding the
+    // bonus unconditionally would give every button a non-zero score and make
+    // relevantOnly keep the whole page.
+    return element => {
+      const role = semantics.role(element);
+      const name = semantics.name(element).toLowerCase();
+      const tag = element.tagName.toLowerCase();
+      let score = 0;
+      for (const term of terms) {
+        if (name === term) score += 6;
+        else if (name.includes(term)) score += 4;
+        if (role === term) score += 3;
+        else if (role.includes(term)) score += 1;
+        if (tag === term) score += 1;
+      }
+      if (score > 0 && INTERACTIVE_ROLES.has(role)) score += 0.5;
+      return score;
+    };
+  }
+
+  function orderedCandidates(options) {
+    const elements = [];
+    for (const element of semantics.candidates()) {
+      if (!matchesScope(element, options)) continue;
+      elements.push(element);
+    }
+    const score = relevanceScorer(options);
+    if (!score) return elements;
+    let scored = elements.map(element => ({ element, score: score(element) }));
+    if (options.relevantOnly) {
+      const kept = scored.filter(entry => entry.score > 0);
+      // A wording miss must not yield an empty tree: fall back to DOM order.
+      if (kept.length > 0) scored = kept;
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(entry => entry.element);
+  }
+
   function snapshot(options = {}) {
-    refs.reset();
+    // keepRefs lets an action attach a post-action snapshot without invalidating
+    // every ref the caller already holds; a plain browser_snapshot still resets.
+    if (!options.keepRefs) refs.reset();
     const limit = Number(options.limit) || 0;
     const elements = [];
     const seenCounts = new Map();
-    for (const element of semantics.candidates()) {
-      if (!matchesScope(element, options)) continue;
+    for (const element of orderedCandidates(options)) {
       const tag = element.tagName.toLowerCase();
       const role = semantics.role(element);
       const name = semantics.name(element);
@@ -114,27 +162,96 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     });
   }
 
-  function catalog(options = {}) {
+  // Entries keep the element alongside its descriptor so callers can hand out a
+  // ref for a specific node (a diff's "added" entries) instead of only naming
+  // it. `catalog()` stays descriptor-only for callers that only compare keys.
+  function catalogEntries(options = {}) {
     const limit = Number(options.limit) || 400;
-    const items = [];
-    for (const element of semantics.candidates()) {
-      if (items.length >= limit) break;
-      if (!matchesScope(element, options)) continue;
+    const entries = [];
+    for (const element of orderedCandidates(options)) {
+      if (entries.length >= limit) break;
       const tag = element.tagName.toLowerCase();
       const item = { role: semantics.role(element), name: semantics.name(element) };
       if (tag === 'input' || tag === 'select' || tag === 'textarea') {
         item.value = tag === 'input' && element.type === 'password' ? '[REDACTED]' : element.value;
       }
-      items.push(item);
+      entries.push({ item, element });
     }
-    return items;
+    return entries;
+  }
+
+  function catalog(options = {}) {
+    return catalogEntries(options).map(entry => entry.item);
+  }
+
+  function describePath(element, depth = 4) {
+    const parts = [];
+    let node = element.parentElement;
+    while (node && parts.length < depth) {
+      const role = semantics.role(node);
+      const name = semantics.name(node);
+      parts.unshift(name ? `${role} "${name}"` : role);
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+
+  // Locate one element on a large page without paying for the whole snapshot.
+  // Returns only the matching nodes plus where they sit in the tree, so the
+  // model pays for what it asked for instead of the entire document.
+  function find(options = {}) {
+    const hasText = typeof options.text === 'string' && options.text.trim().length > 0;
+    const hasRegex = typeof options.regex === 'string' && options.regex.trim().length > 0;
+    if (hasText === hasRegex) {
+      throw Object.assign(new Error('Provide exactly one of text or regex.'), { code: 'INVALID_ARGUMENT', retryable: false });
+    }
+    let matcher;
+    if (hasText) {
+      const needle = options.text.trim().toLowerCase();
+      matcher = hay => hay.includes(needle);
+    } else {
+      let expression;
+      try {
+        // No `g` flag: a stateful lastIndex would make .test() skip matches.
+        expression = new RegExp(options.regex, options.caseSensitive === true ? '' : 'i');
+      } catch (error) {
+        throw Object.assign(new Error(`Invalid regex: ${options.regex} (${error?.message ?? ''})`), { code: 'INVALID_ARGUMENT', retryable: false });
+      }
+      matcher = hay => expression.test(hay);
+    }
+    const limit = Math.max(1, Math.min(Number(options.limit) || 20, 100));
+    const matches = [];
+    let total = 0;
+    for (const element of orderedCandidates(options)) {
+      const role = semantics.role(element);
+      const name = semantics.name(element);
+      if (!matcher(`${role} ${name}`.toLowerCase())) continue;
+      total += 1;
+      if (matches.length >= limit) continue;
+      matches.push({
+        ref: refs.refFor(element, 'e', { role, name, index: 0 }),
+        role,
+        name,
+        path: describePath(element)
+      });
+    }
+    return bounded({
+      query: hasText ? { text: options.text } : { regex: options.regex },
+      total,
+      matches,
+      truncated: total > matches.length,
+      url: windowRef.location.href,
+      title: documentRef.title,
+      revision: refs.revision
+    });
   }
 
   function inventory(options = {}) {
     refs.reset();
     const groups = { forms: [], buttons: [], links: [], text: [], headings: [] };
     const filter = options.filter ?? 'all';
-    for (const element of semantics.candidates()) {
+    // Same relevance ordering as snapshot, so `goal` shortens this too.
+    for (const element of orderedCandidates(options)) {
       const currentRole = semantics.role(element);
       const tag = element.tagName.toLowerCase();
       const isForm = element instanceof windowRef.HTMLFormElement || tag === 'form';
@@ -171,5 +288,5 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     });
   }
 
-  return { snapshot, inventory, catalog };
+  return { snapshot, inventory, catalog, catalogEntries, find };
 }

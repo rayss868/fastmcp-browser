@@ -8,7 +8,7 @@
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
 
-- **32 MCP tools**, full schema footprint ≈ **10k tokens**
+- **33 MCP tools**, full schema footprint ≈ **10k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
 - **Tests**: server 54/54, extension 90/90, build green for Chromium + Firefox
 
@@ -47,7 +47,7 @@ A 30-second walkthrough (1080p): the AI client connects over stdio, the extensio
 2. **No CDP / no `chrome.debugger`** — nothing to attach, nothing for anti-bot layers to see as an automation driver. (Honest caveat: it is still automation on the page — it reduces fingerprints, it is not invisibility.)
 3. **Multi-profile as a first class citizen** — two profiles with the same extension connected at once; `browser_instances` lists them (stable `instanceId`, browser brand, active-tab hint), `browser_use_instance` reroutes the bridge. Playwright MCP needs one process per profile.
 4. **Persistent session model** — tabs join an `Automation` tab group; the session survives across AI runs and keeps `tabIds` reconciled.
-5. **Tiny context cost** — the *entire* 32-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
+5. **Tiny context cost** — the *entire* 33-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
 6. **Loopback-only bridge** — `127.0.0.1:9229`, token-authenticated. No external endpoints, works behind middleware/AI gateways with no proxy config (a known Playwright MCP HTTP/SSE pain point).
 
 ## Benchmark
@@ -70,7 +70,7 @@ Context vs the wider MCP browser landscape:
 | Metric | FastMCP Browser | @playwright/mcp | Notes / source |
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
-| Schema footprint (all tools) | **~10k tokens / 32 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
+| Schema footprint (all tools) | **~10k tokens / 33 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
 | Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
@@ -85,7 +85,7 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 │  Claude, etc │                 │  tools → bridge  │   token handshake        │  background SW + content  │
 └──────────────┘                 └──────────────────┘   multi-instance         │  engine (page MAIN world) │
                                     │  bridge.ts        routing + promote      └───────────────────────────┘
-                                    │  tools.ts (32)                                               │
+                                    │  tools.ts (33)                                               │
                                     └─ index.ts (MCP SDK, zod)                                     ▼
                                                                                     chrome.* APIs, NO CDP
 ```
@@ -175,14 +175,14 @@ node dist/src/cli.js --help
 
 The tool name must match a known tool; the optional second argument is a JSON object of parameters. Success prints one JSON line (`{"ok":true,"result":...}`) to stdout and exits 0; failures print `{"ok":false,"error":{...}}` to stderr and exit nonzero. `FASTMCP_PORT` (default 9229), `FASTMCP_TOKEN`, and `FASTMCP_CLI_TIMEOUT_MS` (request timeout in ms) are read from the environment.
 
-## Tool reference (32)
+## Tool reference (33)
 
 | Group | Tools |
 |---|---|
 | Connection & status | `browser_connect`, `browser_status`, `browser_disconnect` |
 | **Instance / profile** | `browser_instances`, `browser_use_instance` |
 | Tabs & session | `browser_tabs`, `browser_open`, `browser_close`, `browser_focus` |
-| Read the page | `browser_snapshot` (scoped via `scope`/`selector`/`interactiveOnly`/`maxDepth`), `browser_inventory`, `browser_screenshot` |
+| Read the page | `browser_snapshot` (scoped via `scope`/`selector`/`interactiveOnly`/`maxDepth`, ranked by `goal`/`relevantOnly`), `browser_find` (text or regex lookup that returns only the matching elements with refs), `browser_inventory`, `browser_screenshot` |
 | Interact | `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_select` (native `<select>` or ARIA combobox/listbox), `browser_fill_form` (fills many fields plus an optional submit in one call; fields re-resolve per step) |
 | Pointer & scroll | `browser_pointer_move`, `browser_pointer_click`, `browser_pointer_drag`, `browser_scroll` |
 | Timing | `browser_wait`, `browser_wait_for` (selector / text / dom_stable / network_idle) |
@@ -192,12 +192,27 @@ The tool name must match a known tool; the optional second argument is a JSON ob
 
 Actions accept either a snapshot `ref` (with `revision`) or a CSS `selector`, re-resolve stale refs automatically, and return a compact DOM diff so a follow-up snapshot is often unnecessary.
 
+### Fewer round-trips per action
+
+Every action now reports what changed **with refs attached**, so an element that just appeared is clickable without re-snapshotting first. `browser_act` goes further via `refresh`:
+
+- `auto` (default) — attach a compact post-action snapshot only when the page really moved: a navigation, the acted-on element disappearing, or a diff showing a large rerender.
+- `snapshot` — always attach one (saves a round-trip, costs tokens).
+- `none` — refs in the diff only.
+
+The attached snapshot is taken with `keepRefs`, so refs you already hold stay valid instead of being invalidated by the very call that returned them.
+
+On a long page, pass `goal` (what you are trying to achieve) to `browser_snapshot` or `browser_inventory`: candidates are ranked by relevance and `limit` cuts from the most relevant end rather than DOM order, which is what used to hide the form at the bottom of the page. Add `relevantOnly: true` to drop everything that does not match. When you only need one element, `browser_find` returns the matches alone instead of the whole tree.
+
 ### Example session
 
 ```text
 browser_open     { url: "https://example.com" }   → reuse the live Automation tab, or create one if needed
 browser_open     { url: "https://example.org", newTab: true } → open a separate background tab in the Automation group
 browser_snapshot { scope: "dialog" }              → only the open modal's elements, with refs
+browser_snapshot { goal: "checkout payment", limit: 20 } → candidates ranked by relevance, not DOM order
+browser_find     { text: "Checkout" }             → just the matches, each with a ref, no full snapshot
+browser_act      { action: "click", ref: "e4" }   → acts, diffs, and hands back refs for what appeared
 browser_fill     { ref: "e12", value: "hello" }   → set input value + fire change events
 browser_click    { selector: "button[data-testid=save]" } → selector survives React rerenders
 browser_wait_for { state: "dom_stable" }          → wait until the DOM settles instead of sleeping
@@ -280,7 +295,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   ├── fastmcp-browser-promo.mp4       # full teaser (30s, 1080p, with sound)
 │   └── promo-poster.jpg                # poster frame
 ├── server/
-│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
+│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (33 registry)
 │   ├── tests/      # 54 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/

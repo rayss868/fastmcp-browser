@@ -50,11 +50,20 @@ const IMPLICIT_ROLE_BY_TAG = {
   svg: 'graphics'
 };
 
+// Everything a model may need to act on. A control that never enters this list
+// is invisible to every snapshot, so a gap here is a guaranteed failure no
+// matter how good the reasoning is — heuristic truncation is exactly where
+// real sites lose their targets (SPA anchors with no href, handler-only divs,
+// custom menu/tree widgets). Keep the loose patterns deliberate, not broad:
+// `[tabindex]` is narrowed to focusable values and `[contenteditable]` to
+// anything but "false" so the walk does not swallow whole layout wrappers.
 const CANDIDATE_SELECTOR = [
-  'button', 'a[href]', 'input', 'textarea', 'select', '[contenteditable="true"]', 'label',
+  'button', 'a', 'input', 'textarea', 'select', '[contenteditable="true"]', '[contenteditable=""]', 'label',
   '[class*="button"]', '[class*="btn"]',
+  '[onclick]', '[tabindex]:not([tabindex="-1"])',
   '[role="button"]', '[role="link"]', '[role="option"]', '[role="menuitem"]', '[role="checkbox"]',
   '[role="radio"]', '[role="switch"]', '[role="tab"]', '[role="combobox"]', '[role="textbox"]', '[role="searchbox"]',
+  '[role="menuitemcheckbox"]', '[role="menuitemradio"]', '[role="treeitem"]', '[role="gridcell"][tabindex]',
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'main', 'nav', 'form',
   'img[alt]', 'summary', 'svg[aria-label]', 'svg[role="img"]'
 ].join(',');
@@ -97,7 +106,10 @@ export function createDomSemantics(documentRef, windowRef) {
     if (explicit) return explicit;
     const tag = element.tagName.toLowerCase();
     if (tag === 'button') return 'button';
-    if (tag === 'a' && element.getAttribute('href')) return 'link';
+    // SPA routers navigate through `<a>` with no href. Reporting the raw tag
+    // gave those anchors role "a", which interactiveOnly then dropped — the
+    // model could not see the site's own navigation at all.
+    if (tag === 'a') return 'link';
     if (tag === 'input') {
       const type = String(element.getAttribute('type') || element.type || 'text').toLowerCase();
       return INPUT_ROLE_BY_TYPE[type] ?? 'textbox';

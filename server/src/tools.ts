@@ -51,7 +51,7 @@ type Tool = { name: string; description: string; inputSchema: JsonSchema };
 
 export const TOOL_NAMES = [
   'browser_connect', 'browser_status', 'browser_tabs', 'browser_open', 'browser_close', 'browser_focus',
-  'browser_snapshot', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
+  'browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
   'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_act', 'browser_scroll',
   'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
   'browser_storage', 'browser_evaluate', 'browser_inspect', 'browser_instances', 'browser_use_instance', 'browser_disconnect'
@@ -64,8 +64,8 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_open: 'Open a URL in the live Automation tab by default. Set newTab:true to open a separate background tab; all automation tabs join the session group.',
   browser_close: 'Close the given tab and revoke its session authorization so it cannot be targeted again.',
   browser_focus: 'Activate the given tab so subsequent page actions target it visibly.',
-  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets. Narrow it for small tasks: pass scope:"dialog" to return only the currently open dialog/modal, scope:"form" for form controls, scope:"viewport" for on-screen elements, or selector:"main form" to restrict to a CSS subtree; interactiveOnly:true and maxDepth trim further. Set format:"compact" to get one line per element instead of a JSON array (much smaller), frames:true to merge readable iframes (subframe refs are prefixed <frameId>:eN), or mode:"visual" to get a screenshot with numbered boxes over each candidate plus a coordinate map for canvas/WebGL pages that expose no DOM. This can be large on busy pages — prefer browser_inventory with filter:"interactive" for simple locate-and-click tasks.',
-  browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter. Recommended default: pass filter:"interactive" (or "viewport") to keep the response small; filter:"all" also includes every text candidate and can be very large.',
+  browser_snapshot: 'Return the accessibility-style element list (ref, role, name, value) of the page for locating targets. Narrow it for small tasks: pass scope:"dialog" to return only the currently open dialog/modal, scope:"form" for form controls, scope:"viewport" for on-screen elements, or selector:"main form" to restrict to a CSS subtree; interactiveOnly:true and maxDepth trim further. Set format:"compact" to get one line per element instead of a JSON array (much smaller), frames:true to merge readable iframes (subframe refs are prefixed <frameId>:eN), or mode:"visual" to get a screenshot with numbered boxes over each candidate plus a coordinate map for canvas/WebGL pages that expose no DOM. This can be large on busy pages — prefer browser_inventory with filter:"interactive" for simple locate-and-click tasks. Pass goal (a short phrase describing the objective) or keywords to rank candidates by relevance, so limit truncates from the most relevant end instead of DOM order, and relevantOnly:true to drop everything that does not match — the fix for long pages where a DOM-ordered cut hides the target. When you only need one element, browser_find is cheaper than a full snapshot.',
+  browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter. Recommended default: pass filter:"interactive" (or "viewport") to keep the response small; filter:"all" also includes every text candidate and can be very large. goal/keywords rank the groups by relevance the same way browser_snapshot does.',
   browser_click: 'Click an element by ref from the latest snapshot (pass revision to reject stale refs) or by selector when the DOM rerenders often. Stale refs are re-resolved automatically against the live DOM when the element can be matched again; the response flags recovered:true and includes a compact diff of added/removed/changed elements so a follow-up snapshot is often unnecessary.',
   browser_pointer_move: 'Move the pointer to page coordinates in the active tab for hover-driven UI.',
   browser_pointer_click: 'Click at page coordinates using the virtual pointer in the given tab.',
@@ -75,7 +75,8 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_press: 'Dispatch a keyboard key press on the page, optionally targeting an element ref or selector first.',
   browser_select: 'Choose an option on a native select or an ARIA combobox/listbox (MUI Autocomplete, React Select, custom listboxes) targeted by ref (with optional revision) or selector: pass the option value or visible label; for non-native controls the listbox is opened and the matching role="option" is clicked.',
   browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value or selector/value pairs, and an optional submit ref (or submitSelector) to click afterward. Each field is re-resolved against the live DOM, so a rerender between fields is recovered automatically. Inputs, textareas, contenteditable, native selects, ARIA comboboxes, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad target does not waste the whole call. The response carries a compact DOM diff.',
-  browser_act: 'One call that finds the target, acts, waits for the DOM to settle, then reports whether anything changed plus a compact diff and the element new ref — so a follow-up snapshot is usually unnecessary. Pass action (click, fill, type, press, select, hover) with a target ref or selector; stale refs are re-resolved automatically. Set waitAfter:false to skip the settle wait, or waitState:"network_idle" when the effect is network-driven.',
+  browser_act: 'One call that finds the target, acts, waits for the DOM to settle, then reports whether anything changed plus a compact diff and the element new ref — so a follow-up snapshot is usually unnecessary. Pass action (click, fill, type, press, select, hover) with a target ref or selector; stale refs are re-resolved automatically. Set waitAfter:false to skip the settle wait, or waitState:"network_idle" when the effect is network-driven. The response carries refs for every element that appeared or changed, so you can act on them without re-snapshotting. refresh defaults to "auto": a compact post-action snapshot is attached whenever the page navigated, the target disappeared, or the diff shows a large rerender; use "snapshot" to always attach one, "none" for refs only.',
+  browser_find: 'Search the current page for text or a regular expression and return only the matching elements with their ref plus a short ancestor path — far cheaper than a snapshot when you need one element on a large page. Pass exactly one of text (case-insensitive substring) or regex, plus a small limit; matches carry refs usable by any action tool.',
   browser_inspect: 'Read the framework state behind an element by ref, resolved in the page MAIN world: returns the tag, the controlling React/Vue/Angular marker, up to 10 enclosing React component names, and the React props. Pass path to read one property of the element (e.g. "props.children"). Use it to understand what a control represents, not to act.',
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle. Prefer browser_wait_for when you can name the condition you are waiting on.',
@@ -97,6 +98,8 @@ const REF: JsonSchema = { type: 'string', description: 'Element ref returned by 
 const REVISION: JsonSchema = { type: 'integer', description: 'Snapshot revision that produced the ref; rejects stale refs.' };
 const SELECTOR: JsonSchema = { type: 'string', description: 'Target alternative to ref, resolved fresh on every call so rerenders cannot make it stale. Plain CSS, `text=Visible label`, `xpath=//div`, or `host >>> inner` to cross open shadow roots.' };
 const NUM: JsonSchema = { type: 'number', description: 'Page coordinate in CSS pixels.' };
+const GOAL: JsonSchema = { type: 'string', description: 'Short phrase describing what you are trying to achieve on this page. Candidates are ranked against it, so a limit cuts from the most relevant end instead of DOM order — pass it whenever the page is long.' };
+const RELEVANT_ONLY: JsonSchema = { type: 'boolean', description: 'With goal, return only the elements that match it; falls back to every candidate if that would come back empty.' };
 
 function object(properties: Record<string, JsonSchema>, required: string[] = []): JsonSchema {
   return { type: 'object', properties, required, additionalProperties: true };
@@ -127,9 +130,11 @@ const schemas: Record<string, JsonSchema> = {
     boundingBox: { type: 'boolean', description: 'Include each element bounding box (set automatically in visual mode).' },
     format: { type: 'string', enum: ['compact'], description: 'Return one compact line per element instead of a JSON array to save tokens.' },
     frames: { type: 'boolean', description: 'Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN so actions route back to that frame.' },
-    mode: { type: 'string', enum: ['visual'], description: 'Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map for canvas/WebGL targets.' }
+    mode: { type: 'string', enum: ['visual'], description: 'Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map for canvas/WebGL targets.' },
+    goal: GOAL,
+    relevantOnly: RELEVANT_ONLY
   }),
-  browser_inventory: object({ tabId: TAB_ID, boundingBox: { type: 'boolean', description: 'Include bounding boxes in the inventory output.' } }),
+  browser_inventory: object({ tabId: TAB_ID, boundingBox: { type: 'boolean', description: 'Include bounding boxes in the inventory output.' }, goal: GOAL, relevantOnly: RELEVANT_ONLY }),
   browser_click: object(refProps()),
   browser_pointer_move: object({ tabId: TAB_ID, x: NUM, y: NUM, buttons: { type: 'integer', description: 'Pointer button bitmask (1 = primary).' } }, ['x', 'y']),
   browser_pointer_click: object({ tabId: TAB_ID, x: NUM, y: NUM, button: { type: 'string', enum: ['left', 'middle', 'right'], description: 'Mouse button to press.' }, clickCount: { type: 'integer', description: 'Number of clicks (double-click = 2).' } }, ['x', 'y']),
@@ -165,8 +170,19 @@ const schemas: Record<string, JsonSchema> = {
     waitAfter: { type: 'boolean', description: 'Wait for the DOM to settle after acting (default true).' },
     waitState: { type: 'string', enum: ['dom_stable', 'network_idle'], description: 'Settle condition to wait on (default dom_stable).' },
     timeoutMs: { type: 'integer', minimum: 0, maximum: 120000, description: 'Maximum settle wait in milliseconds (default 3000).' },
-    stableMs: { type: 'integer', minimum: 50, maximum: 5000, description: 'Quiet window for dom_stable/network_idle (default 150).' }
+    stableMs: { type: 'integer', minimum: 50, maximum: 5000, description: 'Quiet window for dom_stable/network_idle (default 150).' },
+    refresh: { type: 'string', enum: ['auto', 'snapshot', 'none'], description: 'Post-action page state: "auto" (default) attaches a compact snapshot only when the page navigated, the target disappeared, or the diff shows a large rerender; "snapshot" always attaches one; "none" returns refs only.' }
   }, ['action']),
+  browser_find: object({
+    tabId: TAB_ID,
+    text: { type: 'string', description: 'Case-insensitive substring to look for. Provide exactly one of text or regex.' },
+    regex: { type: 'string', description: 'Regular expression to match against role and name, case-insensitive unless caseSensitive is set. Provide exactly one of text or regex.' },
+    caseSensitive: { type: 'boolean', description: 'Make regex matching case-sensitive (default false). Ignored for text.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum matches to return (default 20).' },
+    goal: GOAL,
+    relevantOnly: RELEVANT_ONLY,
+    selector: SELECTOR
+  }),
   browser_inspect: object({
     tabId: TAB_ID,
     ref: REF,
@@ -222,7 +238,7 @@ export function registerBrowserTools(bridge: BrowserBridge): Tool[] {
 }
 
 const READ_ONLY_METHODS = new Set([
-  'browser_snapshot', 'browser_inventory', 'browser_status', 'browser_tabs', 'browser_inspect',
+  'browser_snapshot', 'browser_find', 'browser_inventory', 'browser_status', 'browser_tabs', 'browser_inspect',
   'browser_network', 'browser_evaluate', 'browser_wait', 'browser_wait_for', 'browser_screenshot'
 ]);
 
