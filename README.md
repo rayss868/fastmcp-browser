@@ -264,7 +264,7 @@ The extension popup displays detected capabilities per browser profile:
 
 ```bash
 cd server   && npm test    # build + 54 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 90 session/router/bridge/network/screenshot/build tests
+cd extension && node --test tests/*.test.mjs   # 120 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -301,7 +301,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 90 tests
+    ├── tests/      # 120 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 

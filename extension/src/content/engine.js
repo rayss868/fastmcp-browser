@@ -2,6 +2,7 @@ import { createReferenceStore, boundingBox, recoverRef } from './refs.js';
 import { createDomSemantics, deepQueryAll, sanitizeText } from './semantics.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
+import { createStealthLayer, createActionability } from './stealth.js';
 import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
 import { computeDiff, shouldRefresh } from './diff.js';
@@ -32,6 +33,9 @@ const pointerController = createPointerController({
   windowRef: window,
   refs
 });
+
+const stealthLayer = pointerController.stealth ?? createStealthLayer({ documentRef: document, windowRef: window, refs });
+const actionability = createActionability({ documentRef: document });
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -177,6 +181,66 @@ function setValue(element, text) {
   element.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+// Normalize stealth flag: true → global config, object → per-call override
+function stealthConfig(stealth) {
+  if (stealth && typeof stealth === 'object') return { ...stealthLayer.config, ...stealth };
+  return stealthLayer.config;
+}
+
+// Stealth typing: character-by-character with human timing and typo simulation
+async function setValueStealth(element, text, config) {
+  element.focus?.();
+  await delay(50 + Math.random() * 100); // natural focus delay
+
+  if ('value' in element) {
+    // Clear existing value first (like a human would select-all + delete)
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set;
+    if (element.value) {
+      setter?.call(element, '');
+      element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: '' }));
+      await delay(30 + Math.random() * 60);
+    }
+
+    // Type character by character
+    const chars = String(text);
+    let current = '';
+    for (const ch of chars) {
+      // Typo simulation
+      const typoRate = config?.keyboardTypoRate ?? 0.02;
+      if (Math.random() < typoRate && /[a-z0-9]/i.test(ch)) {
+        const wrong = ch === ch.toLowerCase()
+          ? String.fromCharCode(ch.charCodeAt(0) + (Math.random() > 0.5 ? 1 : -1))
+          : ch;
+        element.dispatchEvent(new KeyboardEvent('keydown', { key: wrong, bubbles: true }));
+        current += wrong;
+        setter?.call(element, current);
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: wrong }));
+        await delay(80 + Math.random() * 120);
+
+        // Backspace to fix
+        element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
+        current = current.slice(0, -1);
+        setter?.call(element, current);
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: '' }));
+        await delay(50 + Math.random() * 70);
+      }
+
+      // Type actual char
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+      current += ch;
+      setter?.call(element, current);
+      element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+      element.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+      await delay(45 + Math.random() * 95);
+    }
+  } else if (element.isContentEditable || 'textContent' in element) {
+    element.textContent = text;
+    element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  }
+
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 // A custom combobox renders its options into a portal that appears a tick after
 // the control is clicked, sometimes inside a shadow root. Poll for it instead of
 // reading the DOM once.
@@ -214,9 +278,9 @@ async function applySelect(element, value) {
   return sanitizeText(match.textContent ?? value);
 }
 
-function actionClick(input = {}) { const element = targetOf(input); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); element.click(); return finish({ changed: true, url: location.href }); }
-function fill(input = {}, value) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); setValue(element, value); return finish({ changed: true }); }
-function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); return finish({ changed: true }); }
+async function actionClick(input = {}) { const element = targetOf(input); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await actionability.ensureActionable(element, 'click'); await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } return finish({ changed: true, url: location.href }); }
+async function fill(input = {}, value, stealth = false) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (stealth) { await actionability.ensureActionable(element, 'fill'); await setValueStealth(element, value, stealthConfig(stealth)); } else { setValue(element, value); } return finish({ changed: true }); }
+async function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); await delay(30 + Math.random() * 70); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } else { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } return finish({ changed: true }); }
 async function select(input = {}, value) { const element = targetOf(input); return finish({ changed: true, value: await applySelect(element, String(value)) }); }
 function fieldTarget(field, revision) {
   if (typeof field?.selector === 'string' && field.selector) {
@@ -358,17 +422,43 @@ async function act(input = {}) {
   let detail = null;
   if (action === 'click') {
     if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
-    element.click();
+    if (input.stealth) {
+      await actionability.ensureActionable(element, 'click');
+      await pointerController.click({ ref: target.ref, selector: target.selector, revision: target.revision, stealth: true });
+    } else {
+      element.click();
+    }
   } else if (action === 'fill' || action === 'type') {
-    setValue(element, input.value == null ? '' : String(input.value));
+    const value = input.value == null ? '' : String(input.value);
+    if (input.stealth) {
+      await actionability.ensureActionable(element, 'fill');
+      await setValueStealth(element, value, stealthConfig(input.stealth));
+    } else {
+      setValue(element, value);
+    }
   } else if (action === 'press') {
     if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
-    element.dispatchEvent(new KeyboardEvent('keydown', { key: input.key, bubbles: true }));
-    element.dispatchEvent(new KeyboardEvent('keyup', { key: input.key, bubbles: true }));
+    if (input.stealth) {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: input.key, bubbles: true }));
+      await delay(30 + Math.random() * 70);
+      element.dispatchEvent(new KeyboardEvent('keyup', { key: input.key, bubbles: true }));
+    } else {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: input.key, bubbles: true }));
+      element.dispatchEvent(new KeyboardEvent('keyup', { key: input.key, bubbles: true }));
+    }
   } else if (action === 'select') {
     detail = await applySelect(element, String(input.value ?? ''));
   } else if (action === 'hover') {
-    element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+    if (input.stealth) {
+      const rect = element.getBoundingClientRect();
+      await stealthLayer.humanMouse.move(
+        window.innerWidth / 2, window.innerHeight / 2,
+        rect.left + rect.width / 2, rect.top + rect.height / 2,
+        stealthLayer.config
+      );
+    } else {
+      element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+    }
   } else {
     throw Object.assign(new Error(`Unsupported action: ${action}`), { code: 'INVALID_ARGUMENT' });
   }
@@ -412,7 +502,14 @@ async function act(input = {}) {
 }
 
 function screenshotTarget(input = {}) { const element = input.ref || input.selector ? targetOf(input) : document.documentElement; return { boundingBox: box(element), url: location.href, title: document.title }; }
-function scroll(input) { window.scrollBy(input.x ?? 0, input.y ?? 0); return { x: window.scrollX, y: window.scrollY, revision: state.revision }; }
+function scroll(input) {
+  if (input.stealth) {
+    return stealthLayer.humanScroll.scroll(null, input.y ?? 0, input.x ?? 0)
+      .then(() => ({ x: window.scrollX, y: window.scrollY, revision: state.revision, stealth: true }));
+  }
+  window.scrollBy(input.x ?? 0, input.y ?? 0);
+  return { x: window.scrollX, y: window.scrollY, revision: state.revision };
+}
 function pointer(input) {
   if (input.type === 'pointermove') return pointerController.move(input);
   if (input.type === 'pointerclick') return pointerController.click(input);
@@ -444,7 +541,7 @@ function network(input = {}) {
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => { clearTimeout(state.quietTimer); state.quietTimer = setTimeout(resetRefs, 100); });
