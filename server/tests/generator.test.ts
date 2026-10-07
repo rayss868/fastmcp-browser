@@ -74,6 +74,32 @@ test('runWorkflow writes CSV when asked', async () => {
   }
 });
 
+test('runWorkflow pins steps to the most recently opened tab', async () => {
+  const seen: Array<[string, unknown]> = [];
+  let nextId = 10;
+  const call = async (method: string, params: Record<string, unknown>) => {
+    seen.push([method, params.tabId]);
+    return method === 'browser_open' ? { id: nextId++ } : { ok: true };
+  };
+  const steps = [
+    { method: 'browser_click', params: { selector: 'a' }, replayable: true },
+    { method: 'browser_open', params: { url: 'https://a.test' }, replayable: true },
+    { method: 'browser_click', params: { selector: 'a' }, replayable: true },
+    { method: 'browser_open', params: { url: 'https://b.test', newTab: true }, replayable: true },
+    { method: 'browser_evaluate', params: { expression: '1' }, replayable: true },
+    { method: 'browser_click', params: { selector: 'a', tabId: 3 }, replayable: true }
+  ] as never[];
+  await runWorkflow({ steps, call });
+  assert.deepEqual(seen, [
+    ['browser_click', undefined],
+    ['browser_open', undefined],
+    ['browser_click', 10],
+    ['browser_open', undefined],
+    ['browser_evaluate', 11],
+    ['browser_click', 3]
+  ]);
+});
+
 test('runWorkflow throws on a non-replayable step', async () => {
   const steps = [{ method: 'browser_click', params: { ref: 'e1' }, replayable: false, reason: 'uses a snapshot ref without a selector' }] as never[];
   await assert.rejects(() => runWorkflow({ steps, call: async () => ({}) }), /without a selector/);

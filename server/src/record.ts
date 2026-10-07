@@ -22,6 +22,26 @@ const SKIP_METHODS = new Set(['browser_disconnect', 'browser_instances']);
 // sessions, so a recorded step could never target the same tab on replay.
 const REQUIRES_TAB = new Set(['browser_close', 'browser_focus']);
 
+// Tools that never act on a page, so a replay must not pin a tab onto them.
+const TABLESS_METHODS = new Set([
+  'browser_connect', 'browser_status', 'browser_disconnect', 'browser_tabs', 'browser_open',
+  'browser_close', 'browser_focus', 'browser_instances', 'browser_use_instance'
+]);
+
+// Recording drops tabId, so without this every replayed step would hit the
+// session's active tab, which may be an unrelated page the user has open.
+// After a browser_open, later steps are pinned to the tab it returned.
+export function openedTabId(method: string, result: unknown): number | undefined {
+  if (method !== 'browser_open' || result === null || typeof result !== 'object') return undefined;
+  const id = (result as { id?: unknown }).id;
+  return typeof id === 'number' && Number.isInteger(id) ? id : undefined;
+}
+
+export function pinReplayTab(method: string, params: Record<string, unknown>, tabId: number | undefined): Record<string, unknown> {
+  if (tabId === undefined || TABLESS_METHODS.has(method) || params.tabId !== undefined) return params;
+  return { ...params, tabId };
+}
+
 function checkMethod(value: unknown, index: number): string {
   if (typeof value === 'string' && (TOOL_NAMES as readonly string[]).includes(value)) return value;
   throw invalidRunFile(`line ${index + 1} has an unknown method`);

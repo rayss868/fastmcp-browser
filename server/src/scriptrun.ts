@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { RecordedStep } from './record.js';
+import { openedTabId, pinReplayTab, type RecordedStep } from './record.js';
 
 export type WorkflowCall = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 
@@ -111,6 +111,7 @@ export async function runWorkflow(args: {
   const context: Record<string, unknown> = {};
   let lastResult: unknown = null;
   let executed = 0;
+  let replayTab: number | undefined;
 
   for (let index = 0; index < steps.length; index++) {
     const step = steps[index];
@@ -124,8 +125,9 @@ export async function runWorkflow(args: {
     for (const item of items) {
       if (executed > 0 && delay > 0) await sleep(delay);
       context.item = item;
-      const params = resolveValue(step.params, context) as Record<string, unknown>;
+      const params = pinReplayTab(step.method, resolveValue(step.params, context) as Record<string, unknown>, replayTab);
       lastResult = await call(step.method, params);
+      replayTab = openedTabId(step.method, lastResult) ?? replayTab;
       context.result = lastResult;
       executed += 1;
       const capture = (step as { capture?: unknown }).capture;

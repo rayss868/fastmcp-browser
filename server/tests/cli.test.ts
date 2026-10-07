@@ -358,6 +358,36 @@ test('cli replays a run file step by step in order', async () => {
   }
 });
 
+test('cli replay pins later steps to the tab opened by browser_open', async () => {
+  const port = nextPort++;
+  const seen: Array<{ method: string; tabId: unknown }> = [];
+  const wss = await startHost(port, 'test-token', (socket, message) => {
+    const params = (message.params ?? {}) as Record<string, unknown>;
+    seen.push({ method: String(message.method), tabId: params.tabId });
+    const result = message.method === 'browser_open' ? { id: 72, url: 'about:blank' } : { ok: true };
+    socket.send(JSON.stringify({ id: message.id, ok: true, result }));
+  });
+  const file = await writeRunFile([
+    { method: 'browser_status', params: {}, replayable: true },
+    { method: 'browser_open', params: { url: 'https://example.com', newTab: true }, replayable: true },
+    { method: 'browser_click', params: { selector: 'a' }, replayable: true },
+    { method: 'browser_tabs', params: {}, replayable: true }
+  ]);
+  try {
+    const { code, stderr } = await runCli(['replay', file], { FASTMCP_PORT: String(port), FASTMCP_TOKEN: 'test-token' });
+    assert.equal(code, 0, stderr);
+    assert.deepEqual(seen, [
+      { method: 'browser_status', tabId: undefined },
+      { method: 'browser_open', tabId: undefined },
+      { method: 'browser_click', tabId: 72 },
+      { method: 'browser_tabs', tabId: undefined }
+    ]);
+  } finally {
+    await closeHost(wss);
+    await rm(file, { force: true });
+  }
+});
+
 test('cli stops replay on the first failing step with its index', async () => {
   const port = nextPort++;
   const wss = await startHost(port, 'test-token', (socket, message) => {

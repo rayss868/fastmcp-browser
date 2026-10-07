@@ -2,7 +2,7 @@ import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { callHost, controlHost, DEFAULT_REQUEST_TIMEOUT_MS, failure, isObject, type CliFailure } from './client.js';
-import { exportMarkdown, parseRunFile } from './record.js';
+import { exportMarkdown, openedTabId, parseRunFile, pinReplayTab } from './record.js';
 import { generateScript } from './scriptgen.js';
 import { writeSkill } from './skillgen.js';
 import { readUploadFiles, TOOL_NAMES } from './tools.js';
@@ -152,6 +152,7 @@ async function readRun(file: string): Promise<string> {
 
 async function runReplay(file: string, port: number, token: string, timeout: number, delay = 0): Promise<void> {
   const steps = parseRunFile(await readRun(file));
+  let replayTab: number | undefined;
   for (let index = 0; index < steps.length; index++) {
     if (index > 0 && delay > 0) await sleep(delay);
     const step = steps[index];
@@ -161,7 +162,7 @@ async function runReplay(file: string, port: number, token: string, timeout: num
       process.exitCode = 1;
       return;
     }
-    let params = step.params;
+    let params = pinReplayTab(step.method, step.params, replayTab);
     if (step.method === 'browser_upload') {
       const { paths, ...rest } = params;
       if (!Array.isArray(paths) || !paths.every(path => typeof path === 'string')) {
@@ -179,6 +180,7 @@ async function runReplay(file: string, port: number, token: string, timeout: num
     }
     try {
       const result = await callHost(port, token, step.method, params, replayTimeoutMs(step.method, params, timeout));
+      replayTab = openedTabId(step.method, result) ?? replayTab;
       process.stdout.write(`${JSON.stringify({ ok: true, step: index + 1, method: step.method, result: result ?? null })}\n`);
     } catch (stepError) {
       const output = isObject(stepError) && typeof stepError.code === 'string' && typeof stepError.message === 'string'
