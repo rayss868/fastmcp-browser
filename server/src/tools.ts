@@ -268,7 +268,9 @@ function maybeRecord(name: string, params: Record<string, unknown>): void {
     if (!file) return;
     const step = normalizeStep(name, params);
     if (!step) return;
-    void appendStep(file, step).catch(() => {});
+    void appendStep(file, step).catch((error: Error) => {
+      process.stderr.write(`fastmcp-browser: failed to record ${name} to ${file}: ${error.message}\n`);
+    });
   } catch {
     // Recording is best-effort by design.
   }

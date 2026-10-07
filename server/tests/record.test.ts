@@ -97,3 +97,21 @@ test('appendStep appends one JSON line per step', async () => {
     await rm(file, { force: true });
   }
 });
+
+test('appendStep keeps every concurrent step in call order and creates the folder', async () => {
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const { readFile, rm } = await import('node:fs/promises');
+  const dir = join(tmpdir(), `fastmcp-record-concurrent-${Date.now()}`);
+  const file = join(dir, 'nested', 'run.jsonl');
+  try {
+    const total = 50;
+    await Promise.all(Array.from({ length: total }, (_, index) =>
+      appendStep(file, { method: 'browser_wait', params: { milliseconds: index }, replayable: true })
+    ));
+    const steps = parseRunFile(await readFile(file, 'utf8'));
+    assert.deepEqual(steps.map(step => step.params.milliseconds), Array.from({ length: total }, (_, index) => index));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

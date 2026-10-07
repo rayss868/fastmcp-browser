@@ -1,4 +1,5 @@
-import { appendFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { TOOL_NAMES } from './tools.js';
 
 export type RecordedStep = {
@@ -117,8 +118,16 @@ export function normalizeStep(method: string, params: Record<string, unknown>): 
   return step;
 }
 
-export async function appendStep(file: string, step: RecordedStep): Promise<void> {
-  await appendFile(file, `${JSON.stringify(step)}\n`, 'utf8');
+let writeQueue: Promise<void> = Promise.resolve();
+
+export function appendStep(file: string, step: RecordedStep): Promise<void> {
+  const line = `${JSON.stringify(step)}\n`;
+  const write = writeQueue.then(async () => {
+    await mkdir(dirname(file), { recursive: true });
+    await appendFile(file, line, 'utf8');
+  });
+  writeQueue = write.catch(() => {});
+  return write;
 }
 
 export function parseRunFile(text: string): RecordedStep[] {
