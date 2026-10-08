@@ -113,12 +113,29 @@ for (const name of TOOL_NAMES) {
   schemas[name] = schemas[name].extend(TARGET_ZOD);
 }
 
+function toMcpContent(result: unknown): Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> {
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const record = result as Record<string, unknown>;
+    if (typeof record.dataUrl === 'string') {
+      const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]*)$/.exec(record.dataUrl);
+      if (match) {
+        const { dataUrl: _dataUrl, ...metadata } = record;
+        return [
+          { type: 'image' as const, data: match[2], mimeType: match[1] },
+          { type: 'text' as const, text: JSON.stringify(metadata) },
+        ];
+      }
+    }
+  }
+  return [{ type: 'text' as const, text: JSON.stringify(result ?? null) }];
+}
+
 for (const name of TOOL_NAMES) {
   const inputSchema = schemas[name];
   server.registerTool(name, { description: TOOL_DOCS[name] ?? `FastMCP Browser ${name}`, inputSchema }, async (args: Record<string, unknown>) => {
     try {
       const result = await callBrowserTool(bridge, name, args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? null) }] };
+      return { content: toMcpContent(result) };
     } catch (error) {
       return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ code: (error as { code?: string }).code ?? 'ACTION_TIMEOUT', message: error instanceof Error ? error.message : String(error) }) }] };
     }
