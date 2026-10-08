@@ -37,6 +37,16 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     frames: z.boolean().optional().describe('Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN.'),
     mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.')
   }),
+  browser_find: z.object({
+    tabId,
+    text: z.string().optional().describe('Case-insensitive substring to look for. Provide exactly one of text or regex.'),
+    regex: z.string().optional().describe('Regular expression to match against role and name, case-insensitive unless caseSensitive is set. Provide exactly one of text or regex.'),
+    caseSensitive: z.boolean().optional().describe('Make regex matching case-sensitive (default false). Ignored for text.'),
+    limit: z.number().int().min(1).max(100).optional().describe('Maximum matches to return (default 20).'),
+    goal: z.string().optional().describe('Short phrase describing the objective; ranks matches by relevance.'),
+    relevantOnly: z.boolean().optional().describe('Drop matches that do not relate to goal/keywords.'),
+    selector
+  }),
   browser_inventory: z.object({ tabId, boundingBox: z.boolean().optional() }),
   browser_click: pageInput,
   browser_pointer_move: z.object({ tabId, x: z.number(), y: z.number(), buttons: z.number().int().optional() }),
