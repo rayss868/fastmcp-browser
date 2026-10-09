@@ -39,6 +39,29 @@ for (const target of ['chromium', 'firefox']) {
   });
 }
 
+// copyContentEngine in build.mjs inlines ./content/*.js by stripping their
+// imports and concatenating the files. A module that engine.js imports but the
+// file list omits leaves no import path behind, so the resolution check above
+// cannot see it — the call site just throws ReferenceError at runtime. Assert
+// every imported binding is actually defined in the built bundle.
+const importBindingPattern = /import\s*\{([^}]+)\}\s*from\s*['"]\.\/[^'"]+['"]/g;
+const definitionOf = name => new RegExp(`(?:function|class)\\s+${name}\\b|(?:const|let|var)\\s+${name}\\b`);
+
+for (const target of ['chromium', 'firefox']) {
+  test(`${target} content bundle defines every binding engine.js imports`, async () => {
+    const source = await readFile(resolve(root, 'src/content/engine.js'), 'utf8');
+    const bundle = await readFile(resolve(root, 'dist', target, 'src/content/engine.js'), 'utf8');
+    const missing = [];
+    for (const [, bindings] of source.matchAll(importBindingPattern)) {
+      for (const raw of bindings.split(',')) {
+        const name = raw.trim().split(/\s+as\s+/).pop();
+        if (name && !definitionOf(name).test(bundle)) missing.push(name);
+      }
+    }
+    assert.deepEqual(missing, [], `content bundle is missing bindings from dist/${target}`);
+  });
+}
+
 test('Firefox build permits the local WebSocket without upgrading it to TLS', async () => {
   const firefox = JSON.parse(await readFile(resolve(root, 'dist/firefox/manifest.json'), 'utf8'));
   const chromium = JSON.parse(await readFile(resolve(root, 'dist/chromium/manifest.json'), 'utf8'));

@@ -31,6 +31,7 @@ async function copyContentEngine(out) {
     'content/pointer.js',
     'content/files.js',
     'content/network.js',
+    'content/diff.js',
     'content/engine.js'
   ];
   const chunks = [];
