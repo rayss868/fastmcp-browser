@@ -33,11 +33,9 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (33 MCP browser tools).
 
-            ### What's new in v0.4.6
+            ### What's new in v0.4.7
 
-            - **Every action tool works again.** `content/diff.js` was imported by `engine.js` but never inlined into the content bundle by `build.mjs`, so `computeDiff`/`shouldRefresh` were `undefined` at runtime. The `ReferenceError` was swallowed by `callPage` and surfaced as a misleading `TAB_NOT_ACCESSIBLE` ("the tab may be navigating or crashed") on every `browser_click`/`fill`/`type`/`press`/`select`/`fill_form`/`upload`/`scroll`/`pointer_*`, while reads (`browser_snapshot`/`browser_evaluate`) still worked. The module is now bundled.
-            - **Regression guard.** `dist-completeness` now asserts every binding `engine.js` imports is actually defined in the built bundle, so a module that is dropped from the build fails CI instead of silently shipping a broken engine.
-            - **Housekeeping** — MCP server version bumped to 0.4.6; README test counts corrected (55 server, 153 extension).
+            - **Steer the model away from click-then-type.** `browser_click`, `browser_fill`, and `browser_fill_form` now say in their tool descriptions that an input must not be clicked just to place the caret: `browser_fill`/`browser_fill_form` set the value directly, and a click-then-type pair only adds a round-trip in which a stray user click can move the caret and send the text to the wrong field. Same extension build; the change is in the MCP server tool docs.
 
             ### Install
 
