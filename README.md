@@ -264,7 +264,7 @@ The extension popup displays detected capabilities per browser profile:
 
 ```bash
 cd server   && npm test    # build + 55 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 151 session/router/bridge/network/screenshot/build tests
+cd extension && node --test tests/*.test.mjs   # 153 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -296,12 +296,12 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   └── promo-poster.jpg                # poster frame
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (33 registry)
-│   ├── tests/      # 54 tests
+│   ├── tests/      # 55 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 120 tests
+    ├── tests/      # 153 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 

@@ -33,14 +33,11 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (33 MCP browser tools).
 
-            ### What's new in v0.4.5
+            ### What's new in v0.4.6
 
-            - **Screenshots capture the right tab.** `browser_screenshot` (viewport, full page, and the visual-mode overlay) now brings the requested tab to the front before `captureVisibleTab` and restores the tab you were on, so a background Automation tab no longer returns an image of an unrelated foreground tab.
-            - **`dom_stable` / `network_idle` actually settle.** The wait slice now always outlasts the requested quiet window, and an omitted `stableMs` no longer produces a `NaN` slice that hangs until the deadline.
-            - **Documented tool params now reach the extension.** `goal`, `keywords`, `relevantOnly` (snapshot/find/inventory), `filter` (inventory), and `refresh` (act) were documented but missing from the schemas, so zod silently stripped them; they are wired end to end.
-            - **Tighter sandbox.** The authorized tab set follows group membership, so a tab dragged out of the Automation group immediately loses authorization, and auto-resolved tabs reconcile first.
-            - **More fixes.** Structured `removed` diff entries, `position:fixed` elements accepted by the actionability check, `browser_open` reuses any live grouped tab instead of opening a duplicate, the CLI honors per-tool timeouts, and non-idempotent actions are no longer auto-retried.
-            - **Housekeeping** — MCP server version bumped to 0.4.5; README test counts corrected (55 server, 151 extension).
+            - **Every action tool works again.** `content/diff.js` was imported by `engine.js` but never inlined into the content bundle by `build.mjs`, so `computeDiff`/`shouldRefresh` were `undefined` at runtime. The `ReferenceError` was swallowed by `callPage` and surfaced as a misleading `TAB_NOT_ACCESSIBLE` ("the tab may be navigating or crashed") on every `browser_click`/`fill`/`type`/`press`/`select`/`fill_form`/`upload`/`scroll`/`pointer_*`, while reads (`browser_snapshot`/`browser_evaluate`) still worked. The module is now bundled.
+            - **Regression guard.** `dist-completeness` now asserts every binding `engine.js` imports is actually defined in the built bundle, so a module that is dropped from the build fails CI instead of silently shipping a broken engine.
+            - **Housekeeping** — MCP server version bumped to 0.4.6; README test counts corrected (55 server, 153 extension).
 
             ### Install
 
