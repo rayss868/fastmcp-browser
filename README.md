@@ -263,8 +263,8 @@ The extension popup displays detected capabilities per browser profile:
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 54 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 144 session/router/bridge/network/screenshot/build tests
+cd server   && npm test    # build + 55 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 151 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.

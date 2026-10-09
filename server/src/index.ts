@@ -6,7 +6,7 @@ import { TOOL_NAMES, TOOL_DOCS, callBrowserTool } from './tools.js';
 
 const port = Number(process.env.FASTMCP_PORT ?? 9229);
 const bridge = createBridge(port);
-const server = new McpServer({ name: 'fastmcp-browser', version: '0.4.4' });
+const server = new McpServer({ name: 'fastmcp-browser', version: '0.4.5' });
 
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
 const revision = z.number().int().optional().describe('Snapshot revision used to reject stale refs.');
@@ -35,7 +35,10 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     boundingBox: z.boolean().optional().describe('Include each element bounding box (set automatically in visual mode).'),
     format: z.enum(['compact']).optional().describe('Return one compact line per element instead of a JSON array to save tokens.'),
     frames: z.boolean().optional().describe('Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN.'),
-    mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.')
+    mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.'),
+    goal: z.string().optional().describe('Short phrase describing the objective; candidates are ranked by relevance so a limit cuts from the most relevant end.'),
+    keywords: z.array(z.string()).optional().describe('Extra relevance terms used with goal when ranking candidates.'),
+    relevantOnly: z.boolean().optional().describe('With goal, return only the elements that match it; falls back to every candidate if that would come back empty.')
   }),
   browser_find: z.object({
     tabId,
@@ -47,7 +50,14 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     relevantOnly: z.boolean().optional().describe('Drop matches that do not relate to goal/keywords.'),
     selector
   }),
-  browser_inventory: z.object({ tabId, boundingBox: z.boolean().optional() }),
+  browser_inventory: z.object({
+    tabId,
+    boundingBox: z.boolean().optional(),
+    filter: z.enum(['all', 'interactive', 'viewport', 'forms', 'buttons', 'links', 'headings', 'text']).optional().describe('Restrict the inventory to a category; "interactive" or "viewport" keeps the response small.'),
+    goal: z.string().optional().describe('Short phrase describing the objective; groups are ranked by relevance the same way browser_snapshot ranks candidates.'),
+    keywords: z.array(z.string()).optional().describe('Extra relevance terms used with goal when ranking the inventory.'),
+    relevantOnly: z.boolean().optional().describe('With goal/keywords, drop everything that does not match.')
+  }),
   browser_click: pageInput,
   browser_pointer_move: z.object({ tabId, x: z.number(), y: z.number(), buttons: z.number().int().optional() }),
   browser_pointer_click: z.object({ tabId, x: z.number(), y: z.number(), button: z.enum(['left', 'middle', 'right']).optional(), clickCount: z.number().int().positive().optional() }),
@@ -78,7 +88,8 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     waitAfter: z.boolean().optional().describe('Wait for the DOM to settle after acting (default true).'),
     waitState: z.enum(['dom_stable', 'network_idle']).optional().describe('Settle condition to wait on (default dom_stable).'),
     timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum settle wait in milliseconds (default 3000).'),
-    stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).')
+    stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).'),
+    refresh: z.enum(['auto', 'snapshot', 'none']).optional().describe('Post-action page state: "auto" (default) attaches a compact snapshot only when the page moved; "snapshot" always attaches one; "none" returns refs only.')
   }),
   browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").') }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),

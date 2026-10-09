@@ -108,15 +108,15 @@ export function createSessionManager({
       const operation = opening.then(async () => {
         const s = await ensure();
         const openTabs = newTab ? [] : await api.tabs.query({});
-        const managedTabSet = new Set(s.tabIds);
-        const inGroup = new Set(
-          supportsNativeGroups() && s.groupId !== null
-            ? openTabs.filter(tab => tab.groupId === s.groupId).map(tab => tab.id)
-            : openTabs.map(tab => tab.id)
-        );
+        // Native groups are the source of truth, so reuse any live tab already
+        // in the Automation group rather than only the ids this session
+        // recorded. s.tabIds can lag behind a tab the user dragged in, and
+        // restricting reuse to recorded ids would open a duplicate instead.
         const reusableTabId = newTab
           ? undefined
-          : s.tabIds.find(id => managedTabSet.has(id) && inGroup.has(id));
+          : supportsNativeGroups() && s.groupId !== null
+            ? openTabs.find(tab => tab.groupId === s.groupId)?.id
+            : s.tabIds.find(id => openTabs.some(tab => tab.id === id));
         const tab = reusableTabId === undefined
           ? await api.tabs.create({ url, active: false })
           : await api.tabs.update(reusableTabId, { url });

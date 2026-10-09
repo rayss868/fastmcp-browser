@@ -214,7 +214,8 @@ function nearbyKey(ch) {
   const neighbors = NEARBY_KEYS[lower];
   if (!neighbors) return ch;
   const wrong = neighbors.charAt(randInt(0, neighbors.length - 1));
-  return ch.isUpperCase ? wrong.toUpperCase() : wrong;
+  const upper = ch !== ch.toLowerCase();
+  return upper ? wrong.toUpperCase() : wrong;
 }
 
 export function createHumanKeyboard({ dispatchKeydown, dispatchKeyup, setValue }) {
@@ -307,8 +308,15 @@ export function createActionability({ documentRef, semantics }) {
       throw Object.assign(new Error('Element not attached to DOM.'), { code: 'ELEMENT_NOT_FOUND' });
     }
 
+    // offsetParent is null for position:fixed/sticky elements even when they
+    // are visible, so it cannot be the only visibility signal — a fixed cookie
+    // banner or modal would be wrongly rejected as invisible.
     if (!element.offsetParent && element.tagName !== 'BODY') {
-      throw Object.assign(new Error('Element not visible.'), { code: 'ELEMENT_NOT_VISIBLE' });
+      const style = documentRef.defaultView?.getComputedStyle(element);
+      const fixedOrSticky = style?.position === 'fixed' || style?.position === 'sticky';
+      if (!fixedOrSticky) {
+        throw Object.assign(new Error('Element not visible.'), { code: 'ELEMENT_NOT_VISIBLE' });
+      }
     }
 
     if (element.disabled || element.getAttribute?.('aria-disabled') === 'true') {

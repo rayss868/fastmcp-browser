@@ -4,6 +4,7 @@ import { unwrapInjectionResult } from './page-result.js';
 import { captureFullPage } from './screenshot.js';
 import { createNetworkMonitor } from './network-monitor.js';
 import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity } from './session.js';
+import { waitSliceMs } from './wait.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
 const PORT = 9229;
@@ -54,7 +55,9 @@ const router = createCommandRouter({
   },
   capabilities: { upload: true },
   network: (tabId, limit) => networkMonitor.get(tabId, limit),
-  resolveTabId: async () => (await session.info()).tabIds[0]
+  // Reconcile first: info() can return a stale membership, and auto-resolving
+  // to a tab that has since left the group would authorize it outside the sandbox.
+  resolveTabId: async () => (await session.reconcile()).tabIds[0]
 });
 
 function send(ws, payload) { ws.send(JSON.stringify(payload)); }
@@ -174,7 +177,7 @@ async function waitForPage(tabId, params) {
     }
     try {
       // Short slices keep the wait alive across navigations that destroy the content script.
-      const outcome = await callPage(tabId, 'browser_wait_for', { ...params, timeoutMs: Math.min(remaining, 2000) }, 1);
+      const outcome = await callPage(tabId, 'browser_wait_for', { ...params, timeoutMs: waitSliceMs(params.stableMs, remaining) }, 1);
       if (outcome?.satisfied) return outcome;
     } catch (error) {
       if (error?.code !== 'TAB_NOT_ACCESSIBLE') throw error;
@@ -197,8 +200,19 @@ async function tabs(method, params) {
 async function screenshot(params) {
   const tabId = Number(params.tabId);
   if (params.fullPage === true) return captureFullPage(api, tabId);
+  // captureVisibleTab grabs whatever is *visible* in the window, not the tab you
+  // name, so a background Automation tab would capture an unrelated foreground
+  // tab. Bring the target to the front for the capture, then restore the tab the
+  // user was actually looking at. captureFullPage does the same.
   const tab = await api.tabs.get(tabId);
-  const dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  const [previousActive] = await api.tabs.query({ active: true, windowId: tab.windowId });
+  if (previousActive?.id !== tabId) await api.tabs.update(tabId, { active: true });
+  let dataUrl;
+  try {
+    dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } finally {
+    if (previousActive && previousActive.id !== tabId) await api.tabs.update(previousActive.id, { active: true });
+  }
   const metadata = await callPage(tabId, 'browser_screenshot', params);
   return { ...metadata, dataUrl };
 }
@@ -356,7 +370,18 @@ async function visualSnapshot(params) {
   const tabId = Number(params.tabId);
   const snapshot = await callPage(tabId, 'browser_snapshot', { ...params, mode: undefined, frames: undefined, boundingBox: true });
   const tab = await api.tabs.get(tabId);
-  const dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  // captureVisibleTab grabs the window's visible tab, not the named one, so a
+  // background Automation tab would draw its marks over an unrelated foreground
+  // tab. Bring the target forward for the capture and restore it afterwards,
+  // exactly like screenshot().
+  const [previousActive] = await api.tabs.query({ active: true, windowId: tab.windowId });
+  if (previousActive?.id !== tabId) await api.tabs.update(tabId, { active: true });
+  let dataUrl;
+  try {
+    dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  } finally {
+    if (previousActive && previousActive.id !== tabId) await api.tabs.update(previousActive.id, { active: true });
+  }
   const metrics = await api.scripting.executeScript({
     target: { tabId },
     func: () => ({ width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio, scrollX: window.scrollX, scrollY: window.scrollY })
@@ -428,7 +453,10 @@ api.tabs.onUpdated?.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') emit('page.navigated', { tabId, url: changeInfo.url ?? tab.url ?? null, status: changeInfo.status });
   if (changeInfo.status === 'complete') emit('tab.updated', { tabId, url: tab.url ?? null, title: tab.title ?? null, status: changeInfo.status });
   if (changeInfo.groupId !== undefined) {
-    await session.reconcile();
+    const info = await session.reconcile();
+    // Keep the sandbox in step with the group: a tab dragged out of the group
+    // must lose authorization, not just fail to be added to it.
+    router.adopt(info.tabIds);
     api.runtime.sendMessage?.({ method: 'status.changed' })?.catch?.(() => {});
   }
 });

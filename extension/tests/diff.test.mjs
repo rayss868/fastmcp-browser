@@ -45,20 +45,21 @@ test('changed entries report ref, from and to', () => {
   ]);
 });
 
-test('removed entries stay plain keys because the element is gone', () => {
+test('removed entries are structured like added ones, without a ref', () => {
   const refs = createReferenceStore();
   const before = [{ role: 'button', name: 'Confirm' }];
   const after = [entry('button', 'Save', { id: 'save' })];
 
   const diff = computeDiff(before, after, refs);
 
-  assert.deepEqual(diff.removed, ['button|Confirm']);
+  assert.deepEqual(diff.removed, [{ role: 'button', name: 'Confirm' }]);
 });
 
 test('diff accepts plain items for before without needing elements', () => {
   const refs = createReferenceStore();
   const diff = computeDiff([{ role: 'button', name: 'Save' }], [entry('button', 'Close', { id: 'close' })], refs);
-  assert.equal(diff.removed[0], catalogKey({ role: 'button', name: 'Save' }));
+  assert.deepEqual(diff.removed[0], { role: 'button', name: 'Save' });
+  assert.equal(catalogKey(diff.removed[0]), 'button|Save');
   assert.equal(diff.added[0].ref, 'e1');
 });
 

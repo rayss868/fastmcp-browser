@@ -142,10 +142,14 @@ function snapshot(input = {}) {
   const result = discovery.snapshot(input);
   // Compact format returns { text, elementCount } without an `elements` array;
   // the old unconditional .map() crashed every compact snapshot (masked by
-  // callPage as "navigating or crashed" — the Azure-portal failures).
-  state.lastCatalog = (result.elements ?? []).map(item => (
-    item.value === undefined ? { role: item.role, name: item.name } : { role: item.role, name: item.name, value: item.value }
-  ));
+  // callPage as "navigating or crashed" — the Azure-portal failures). Keep a
+  // real baseline in that case: an empty baseline made the next diff report the
+  // whole page as freshly added.
+  state.lastCatalog = result.elements
+    ? result.elements.map(item => (
+        item.value === undefined ? { role: item.role, name: item.name } : { role: item.role, name: item.name, value: item.value }
+      ))
+    : discovery.catalogEntries({ limit: 400 });
   // Few elements in top frame + iframes present → the UI likely renders inside
   // an iframe; tell the caller to retry with frames: true instead of leaving
   // them with a near-empty tree and no explanation.

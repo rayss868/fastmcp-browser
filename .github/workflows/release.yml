@@ -33,14 +33,14 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (33 MCP browser tools).
 
-            ### What's new in v0.4.4
+            ### What's new in v0.4.5
 
-            - **Actionable diffs.** After every action the engine returns a diff of what actually changed on the page, so agents can verify their click or typing landed instead of re-snapshotting blindly.
-            - **Auto post-action snapshot.** Actions now ship a refreshed snapshot (with new refs) in the same call — no extra `browser_snapshot` round-trip needed.
-            - **Goal ranking.** `browser_snapshot` / `browser_inventory` accept a `goal` (and `relevantOnly`) so candidates are ranked by relevance and `limit` cuts from the most relevant end instead of DOM order — long pages no longer hide the target form at the bottom.
-            - **`browser_find` tool.** Text or regex lookup that returns only the matching elements with refs, without the full tree. 33 MCP tools now.
-            - **Ref recovery fixes.** Radio fill on Google Forms, null unwrap in `browser_evaluate`, and ref recovery by duplicate index.
-            - **Housekeeping** — MCP server version bumped to 0.4.4; README extension test count corrected (144).
+            - **Screenshots capture the right tab.** `browser_screenshot` (viewport, full page, and the visual-mode overlay) now brings the requested tab to the front before `captureVisibleTab` and restores the tab you were on, so a background Automation tab no longer returns an image of an unrelated foreground tab.
+            - **`dom_stable` / `network_idle` actually settle.** The wait slice now always outlasts the requested quiet window, and an omitted `stableMs` no longer produces a `NaN` slice that hangs until the deadline.
+            - **Documented tool params now reach the extension.** `goal`, `keywords`, `relevantOnly` (snapshot/find/inventory), `filter` (inventory), and `refresh` (act) were documented but missing from the schemas, so zod silently stripped them; they are wired end to end.
+            - **Tighter sandbox.** The authorized tab set follows group membership, so a tab dragged out of the Automation group immediately loses authorization, and auto-resolved tabs reconcile first.
+            - **More fixes.** Structured `removed` diff entries, `position:fixed` elements accepted by the actionability check, `browser_open` reuses any live grouped tab instead of opening a duplicate, the CLI honors per-tool timeouts, and non-idempotent actions are no longer auto-retried.
+            - **Housekeeping** — MCP server version bumped to 0.4.5; README test counts corrected (55 server, 151 extension).
 
             ### Install
 

@@ -100,6 +100,21 @@ test('documented tools expose described input schema properties', () => {
   assert.deepEqual(evaluate.inputSchema.required, ['expression']);
 });
 
+test('ranking and filter params documented in the tool docs exist in the schemas', () => {
+  // These were documented and implemented in the page engine but dropped from
+  // the schemas, so zod stripped them before they ever reached the extension.
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const props = (name: string) => byName.get(name)!.inputSchema.properties as Record<string, { description?: string }>;
+
+  for (const field of ['goal', 'keywords', 'relevantOnly']) {
+    assert.ok(props('browser_snapshot')[field]?.description, `browser_snapshot.${field} missing from the schema`);
+    assert.ok(props('browser_find')[field]?.description, `browser_find.${field} missing from the schema`);
+    assert.ok(props('browser_inventory')[field]?.description, `browser_inventory.${field} missing from the schema`);
+  }
+  assert.ok(props('browser_inventory').filter?.description, 'browser_inventory.filter missing from the schema');
+  assert.ok(props('browser_act').refresh?.description, 'browser_act.refresh missing from the schema');
+});
+
 test('registry documents the composite act and framework inspect tools', () => {
   const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
   const act = byName.get('browser_act');

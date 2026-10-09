@@ -132,9 +132,17 @@ const schemas: Record<string, JsonSchema> = {
     frames: { type: 'boolean', description: 'Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN so actions route back to that frame.' },
     mode: { type: 'string', enum: ['visual'], description: 'Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map for canvas/WebGL targets.' },
     goal: GOAL,
+    keywords: { type: 'array', items: { type: 'string' }, description: 'Extra relevance terms used with goal when ranking candidates.' },
     relevantOnly: RELEVANT_ONLY
   }),
-  browser_inventory: object({ tabId: TAB_ID, boundingBox: { type: 'boolean', description: 'Include bounding boxes in the inventory output.' }, goal: GOAL, relevantOnly: RELEVANT_ONLY }),
+  browser_inventory: object({
+    tabId: TAB_ID,
+    boundingBox: { type: 'boolean', description: 'Include bounding boxes in the inventory output.' },
+    filter: { type: 'string', enum: ['all', 'interactive', 'viewport', 'forms', 'buttons', 'links', 'headings', 'text'], description: 'Restrict the inventory to a category; "interactive" or "viewport" keeps the response small.' },
+    goal: GOAL,
+    keywords: { type: 'array', items: { type: 'string' }, description: 'Extra relevance terms used with goal when ranking the inventory.' },
+    relevantOnly: RELEVANT_ONLY
+  }),
   browser_click: object(refProps()),
   browser_pointer_move: object({ tabId: TAB_ID, x: NUM, y: NUM, buttons: { type: 'integer', description: 'Pointer button bitmask (1 = primary).' } }, ['x', 'y']),
   browser_pointer_click: object({ tabId: TAB_ID, x: NUM, y: NUM, button: { type: 'string', enum: ['left', 'middle', 'right'], description: 'Mouse button to press.' }, clickCount: { type: 'integer', description: 'Number of clicks (double-click = 2).' } }, ['x', 'y']),
@@ -180,6 +188,7 @@ const schemas: Record<string, JsonSchema> = {
     caseSensitive: { type: 'boolean', description: 'Make regex matching case-sensitive (default false). Ignored for text.' },
     limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum matches to return (default 20).' },
     goal: GOAL,
+    keywords: { type: 'array', items: { type: 'string' }, description: 'Extra relevance terms used with goal when ranking matches.' },
     relevantOnly: RELEVANT_ONLY,
     selector: SELECTOR
   }),
@@ -256,7 +265,10 @@ function isRetryable(name: string, error: { code?: string; retryable?: boolean }
   // An explicit retryable:false comes from the page-side guard that stops an
   // action whose effect is unknown from being replayed.
   if (error?.retryable === false) return false;
-  if (code === 'NO_CONNECTION' || code === 'TAB_NOT_ACCESSIBLE') return true;
+  // A dropped connection or an unreachable tab is retried for reads, but
+  // re-sending a click/fill/open could double-fire a side effect we cannot
+  // observe, so those surface the error instead of retrying.
+  if (code === 'NO_CONNECTION' || code === 'TAB_NOT_ACCESSIBLE') return READ_ONLY_METHODS.has(name);
   if (code === 'ACTION_TIMEOUT') return READ_ONLY_METHODS.has(name);
   return error?.retryable === true;
 }

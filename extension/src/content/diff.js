@@ -49,7 +49,7 @@ export function computeDiff(before, after, refs) {
     if (count > (beforeCounts.get(key) ?? 0)) added.push(describe(key));
   }
   for (const [key, count] of beforeCounts) {
-    if (count > (afterCounts.get(key) ?? 0)) removed.push(key);
+    if (count > (afterCounts.get(key) ?? 0)) removed.push(describe(key));
   }
 
   const previousValues = new Map(beforeItems.map(item => [catalogKey(item), item.value]));
