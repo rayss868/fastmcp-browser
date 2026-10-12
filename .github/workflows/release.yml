@@ -33,9 +33,12 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (33 MCP browser tools).
 
-            ### What's new in v0.4.7
+            ### What's new in v0.4.8
 
-            - **Steer the model away from click-then-type.** `browser_click`, `browser_fill`, and `browser_fill_form` now say in their tool descriptions that an input must not be clicked just to place the caret: `browser_fill`/`browser_fill_form` set the value directly, and a click-then-type pair only adds a round-trip in which a stray user click can move the caret and send the text to the wrong field. Same extension build; the change is in the MCP server tool docs.
+            - **Lightweight page digest.** `browser_snapshot` now accepts `format:"digest"` to return actionable controls with refs, values, and checked/disabled state without a full accessibility tree. The digest stays warm as the DOM settles, invalidates promptly on relevant mutations, scopes to the top visible modal, and supports `browser_act.refresh:"digest"` for post-action state.
+            - **Nested modal targeting.** Dialog-scoped snapshots now select the last visible dialog, including `alertdialog`, so nested modal actions target the active dialog rather than an underlying one.
+            - **Bundle parsing regression fixed.** The digest role set uses a distinct identifier so the concatenated Chromium/Firefox content bundle parses and the page engine can inject successfully.
+            - **Retained v0.4.7 guidance.** Tool descriptions continue to discourage click-then-type for form fields; `browser_fill` and `browser_fill_form` set values directly and avoid an unnecessary click round-trip.
 
             ### Install
 

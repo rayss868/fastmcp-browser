@@ -33,7 +33,7 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     maxDepth: z.number().int().min(1).max(50).optional().describe('Maximum ancestor depth from the document root.'),
     limit: z.number().int().min(1).max(1000).optional().describe('Maximum number of elements to return.'),
     boundingBox: z.boolean().optional().describe('Include each element bounding box (set automatically in visual mode).'),
-    format: z.enum(['compact']).optional().describe('Return one compact line per element instead of a JSON array to save tokens.'),
+    format: z.enum(['compact', 'digest']).optional().describe('compact: one line per element instead of a JSON array. digest: only the interactive controls with refs and their value/checked/disabled state, kept warm as the DOM settles — the light way to orient before acting.'),
     frames: z.boolean().optional().describe('Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN.'),
     mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.'),
     goal: z.string().optional().describe('Short phrase describing the objective; candidates are ranked by relevance so a limit cuts from the most relevant end.'),
@@ -89,7 +89,7 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     waitState: z.enum(['dom_stable', 'network_idle']).optional().describe('Settle condition to wait on (default dom_stable).'),
     timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum settle wait in milliseconds (default 3000).'),
     stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).'),
-    refresh: z.enum(['auto', 'snapshot', 'none']).optional().describe('Post-action page state: "auto" (default) attaches a compact snapshot only when the page moved; "snapshot" always attaches one; "none" returns refs only.')
+    refresh: z.enum(['auto', 'snapshot', 'digest', 'none']).optional().describe('Post-action page state: "auto" (default) attaches a compact snapshot only when the page moved; "snapshot" always attaches one; "digest" attaches the light interactive-control digest; "none" returns refs only.')
   }),
   browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").') }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),

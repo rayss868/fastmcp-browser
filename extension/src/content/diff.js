@@ -71,7 +71,7 @@ export function computeDiff(before, after, refs) {
 // while the page held still and the acted-on element is still there; anything
 // else means the model is now looking at a page it has never seen.
 export function shouldRefresh({ mode = 'auto', navigated = false, targetGone = false, churn = 0 } = {}) {
-  if (mode === 'snapshot') return true;
+  if (mode === 'snapshot' || mode === 'digest') return true;
   if (mode === 'none') return false;
   if (mode !== 'auto') throw Object.assign(new Error(`Unsupported refresh mode: ${mode}`), { code: 'INVALID_ARGUMENT' });
   return navigated || targetGone || churn >= AUTO_REFRESH_CHURN;

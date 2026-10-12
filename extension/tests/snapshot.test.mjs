@@ -123,6 +123,38 @@ test('snapshot applies a selector scope', () => {
   assert.equal(result.elements[0].name, 'Save');
 });
 
+test('dialog scope selects the last visible nested modal', () => {
+  const outer = { tagName: 'DIV', visible: true };
+  const inner = { tagName: 'DIV', visible: true };
+  const outerButton = { tagName: 'BUTTON', role: 'button', textContent: 'Outer action', visible: true };
+  const innerButton = { tagName: 'BUTTON', role: 'button', textContent: 'Inner action', visible: true };
+  outer.contains = element => element === outer || element === outerButton;
+  inner.contains = element => element === inner || element === innerButton;
+  for (const node of [outer, inner, outerButton, innerButton]) {
+    node.getAttribute = key => key === 'role' ? node.role : null;
+    node.getBoundingClientRect = () => ({ x: 1, y: 2, width: 30, height: 10 });
+    node.isConnected = true;
+  }
+  const documentRef = {
+    title: 'Fixture',
+    querySelectorAll: selector => selector.includes('dialog[open]') ? [outer, inner] : [outerButton, innerButton],
+    getElementById: () => null
+  };
+  const windowRef = {
+    location: { href: 'https://fixture.test/' },
+    getComputedStyle: element => ({ display: element.visible ? 'block' : 'none', visibility: 'visible' }),
+    HTMLInputElement: class {},
+    HTMLButtonElement: class {},
+    HTMLFormElement: class {},
+    CSS: { escape: value => value }
+  };
+  const semantics = createDomSemantics(documentRef, windowRef);
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const result = engine.catalog({ scope: 'dialog' });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, 'Inner action');
+});
+
 test('catalog returns compact descriptors without touching refs', () => {
   const { documentRef, windowRef, semantics } = fixture();
   const refs = createReferenceStore();

@@ -26,6 +26,19 @@ test('browser_fill_form batches fields and an optional submit in one call', () =
   assert.deepEqual(items.required, ['value']);
 });
 
+test('the digest is a snapshot format, not a standalone tool', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  assert.equal(byName.get('browser_digest'), undefined, 'browser_digest must not be a separate tool');
+  const snapshot = byName.get('browser_snapshot')!;
+  const props = snapshot.inputSchema.properties as Record<string, { enum?: string[]; description?: string }>;
+  assert.ok(props.format?.enum?.includes('digest'), 'browser_snapshot.format must offer a digest mode');
+  assert.match(String(props.format?.description), /digest/i);
+  assert.match(snapshot.description, /digest/i, 'the snapshot description must steer toward the digest');
+  const act = byName.get('browser_act')!;
+  const actProps = act.inputSchema.properties as Record<string, { enum?: string[] }>;
+  assert.ok(actProps.refresh?.enum?.includes('digest'), 'browser_act.refresh must offer a digest mode');
+});
+
 test('browser_evaluate accepts an optional ref and revision for element-scoped evaluation', () => {
   const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
   const evaluate = byName.get('browser_evaluate');

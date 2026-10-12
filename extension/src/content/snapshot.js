@@ -36,9 +36,13 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     if (options.scope === 'viewport') {
       if (!inViewport(element)) return false;
     } else if (options.scope === 'dialog') {
-      const dialog = typeof documentRef.querySelector === 'function'
-        ? documentRef.querySelector('[role="dialog"],[aria-modal="true"],dialog[open]')
-        : null;
+      const dialogs = typeof documentRef.querySelectorAll === 'function'
+        ? Array.from(documentRef.querySelectorAll('dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"]'))
+        : [];
+      let dialog = null;
+      for (let index = dialogs.length - 1; index >= 0; index -= 1) {
+        if (semantics.visible(dialogs[index])) { dialog = dialogs[index]; break; }
+      }
       if (!dialog || !contains(dialog, element)) return false;
     } else if (options.scope === 'form') {
       if (typeof element.closest !== 'function' || !element.closest('form')) return false;
