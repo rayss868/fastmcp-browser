@@ -12,6 +12,9 @@
     dd { margin: 0; overflow-wrap: anywhere; }
     pre { max-height: 160px; overflow: auto; white-space: pre-wrap; }
     button { margin-top: 14px; width: 100%; padding: 8px; }
+    #release { margin-top: 12px; padding: 10px; border-radius: 6px; background: color-mix(in srgb, #e6a700 18%, transparent); }
+    #release[hidden] { display: none; }
+    #release a { color: inherit; }
   </style>
 </head>
 <body>
@@ -26,6 +29,7 @@
     <dt>Tab group</dt><dd id="group">-</dd>
   </dl>
   <pre id="capabilities">Loading capabilities...</pre>
+  <p id="release" role="status" hidden></p>
   <button id="disconnect" type="button">Disconnect</button>
   <script type="module" src="status.js"></script>
 </body>

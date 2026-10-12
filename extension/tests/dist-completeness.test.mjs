@@ -67,6 +67,7 @@ test('Firefox build permits the local WebSocket without upgrading it to TLS', as
   const chromium = JSON.parse(await readFile(resolve(root, 'dist/chromium/manifest.json'), 'utf8'));
   const csp = firefox.content_security_policy?.extension_pages;
   assert.match(csp, /connect-src[^;]*ws:\/\/127\.0\.0\.1:9229/);
+  assert.match(csp, /connect-src[^;]*https:\/\/api\.github\.com/);
   assert.doesNotMatch(csp, /upgrade-insecure-requests/);
   assert.equal(chromium.content_security_policy, undefined);
 });

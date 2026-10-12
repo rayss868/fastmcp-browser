@@ -8,7 +8,8 @@ const fields = {
   tabs: document.querySelector('#tabs'),
   session: document.querySelector('#session'),
   group: document.querySelector('#group'),
-  capabilities: document.querySelector('#capabilities')
+  capabilities: document.querySelector('#capabilities'),
+  release: document.querySelector('#release')
 };
 
 function send(method, params = {}) {
@@ -27,6 +28,36 @@ function formatBrowserDetail(detail) {
     return 'unknown';
   }
   return String(detail);
+}
+
+function compareVersions(left, right) {
+  const a = left.split('.').map(Number);
+  const b = right.split('.').map(Number);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+async function checkForRelease() {
+  try {
+    const response = await fetch('https://api.github.com/repos/rayss868/fastmcp-browser/releases/latest');
+    if (!response.ok) return;
+    const release = await response.json();
+    const match = /^v?(\d+(?:\.\d+){0,3})$/.exec(release.tag_name ?? '');
+    const installed = api.runtime.getManifest().version;
+    if (!match || compareVersions(match[1], installed) <= 0) return;
+    const url = `https://github.com/rayss868/fastmcp-browser/releases/tag/${encodeURIComponent(release.tag_name)}`;
+    fields.release.replaceChildren(document.createTextNode(`Versi baru tersedia: ${release.tag_name} — `));
+    const link = document.createElement('a');
+    link.href = url;
+    link.textContent = 'Lihat release';
+    fields.release.append(link);
+    fields.release.hidden = false;
+  } catch {
+    fields.release.hidden = true;
+  }
 }
 
 function render(status) {
@@ -71,4 +102,5 @@ api.runtime.onMessage?.addListener(message => {
 });
 
 await refresh();
+void checkForRelease();
 setInterval(refresh, 1000);

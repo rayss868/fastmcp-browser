@@ -33,10 +33,12 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (33 MCP browser tools).
 
-            ### What's new in v0.4.8
+            ### What's new in v0.4.9
 
-            - **Lightweight page digest.** `browser_snapshot` now accepts `format:"digest"` to return actionable controls with refs, values, and checked/disabled state without a full accessibility tree. The digest stays warm as the DOM settles, invalidates promptly on relevant mutations, scopes to the top visible modal, and supports `browser_act.refresh:"digest"` for post-action state.
-            - **Nested modal targeting.** Dialog-scoped snapshots now select the last visible dialog, including `alertdialog`, so nested modal actions target the active dialog rather than an underlying one.
+            - **Release notifications.** The extension status popup checks the latest GitHub release and displays a text notice with a release link when a newer version is available. It never downloads or installs updates automatically.
+            - **Firefox connectivity.** Firefox extension pages allow the GitHub Releases API connection used by the notification checker while retaining the local WebSocket connection policy.
+            - **Lightweight page digest.** `browser_snapshot` accepts `format:"digest"` to return actionable controls with refs, values, and checked/disabled state without a full accessibility tree. The digest stays warm as the DOM settles, invalidates promptly on relevant mutations, scopes to the top visible modal, and supports `browser_act.refresh:"digest"` for post-action state.
+            - **Nested modal targeting.** Dialog-scoped snapshots select the last visible dialog, including `alertdialog`, so nested modal actions target the active dialog rather than an underlying one.
             - **Bundle parsing regression fixed.** The digest role set uses a distinct identifier so the concatenated Chromium/Firefox content bundle parses and the page engine can inject successfully.
             - **Retained v0.4.7 guidance.** Tool descriptions continue to discourage click-then-type for form fields; `browser_fill` and `browser_fill_form` set values directly and avoid an unnecessary click round-trip.
 
