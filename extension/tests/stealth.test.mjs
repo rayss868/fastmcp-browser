@@ -131,3 +131,45 @@ test('actionability throws for not-connected element', async () => {
   const layer = createActionability({ documentRef: docRef });
   await assert.rejects(() => layer.ensureActionable(element), e => e.code === 'ELEMENT_NOT_FOUND');
 });
+
+test('actionability accepts a visible position:fixed element despite null offsetParent', async () => {
+  const element = {
+    isConnected: true,
+    offsetParent: null, // fixed elements report a null offsetParent even when visible
+    tagName: 'BUTTON',
+    disabled: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({ left: 100, top: 100, width: 80, height: 30 }),
+    contains: () => true
+  };
+  const documentRef = {
+    elementFromPoint: () => element,
+    defaultView: { getComputedStyle: () => ({ position: 'fixed' }) }
+  };
+  const origSleep = globalThis.setTimeout;
+  globalThis.setTimeout = fn => origSleep(fn, 0);
+  try {
+    const layer = createActionability({ documentRef });
+    assert.equal(await layer.ensureActionable(element), true);
+  } finally {
+    globalThis.setTimeout = origSleep;
+  }
+});
+
+test('actionability still rejects a hidden element with null offsetParent', async () => {
+  const element = {
+    isConnected: true,
+    offsetParent: null,
+    tagName: 'DIV',
+    disabled: false,
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
+    contains: () => true
+  };
+  const documentRef = {
+    elementFromPoint: () => element,
+    defaultView: { getComputedStyle: () => ({ position: 'static', display: 'none' }) }
+  };
+  const layer = createActionability({ documentRef });
+  await assert.rejects(() => layer.ensureActionable(element), e => e.code === 'ELEMENT_NOT_VISIBLE');
+});

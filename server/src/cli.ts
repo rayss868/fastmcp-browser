@@ -138,6 +138,17 @@ function replayTimeoutMs(method: string, params: Record<string, unknown>, fallba
   return fallback;
 }
 
+// Mirror the server's per-tool timeouts so a wait/screenshot is not cut off at
+// the generic 20 s while it is still legitimately running.
+function toolTimeoutMs(method: string, params: Record<string, unknown>, base: number): number {
+  if (method === 'browser_wait') return Math.min(180000, Number(params.milliseconds ?? 0) + 5000);
+  if (method === 'browser_wait_for') return Math.min(180000, Number(params.timeoutMs ?? 30000) + 5000);
+  if (method === 'browser_screenshot' && params.fullPage === true) return 120000;
+  if (method === 'browser_evaluate') return 30000;
+  if (method === 'browser_act') return Math.min(120000, Number(params.timeoutMs ?? 3000) + 15000);
+  return base;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -310,7 +321,8 @@ async function main(): Promise<void> {
         );
       }
     }
-    const result = await callHost(port, token, input.method, params, timeout);
+    const requestTimeoutMs = toolTimeoutMs(input.method, params, timeout);
+    const result = await callHost(port, process.env.FASTMCP_TOKEN ?? 'fastmcp-local-dev', input.method, params, requestTimeoutMs);
     process.stdout.write(`${JSON.stringify({ ok: true, result: result ?? null })}\n`);
   } catch (problem) {
     const output: CliFailure = isObject(problem) && typeof problem.code === 'string' && typeof problem.message === 'string'

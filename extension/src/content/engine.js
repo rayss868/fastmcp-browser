@@ -5,6 +5,7 @@ import { createPointerController } from './pointer.js';
 import { createStealthLayer, createActionability } from './stealth.js';
 import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
+import { computeDiff, shouldRefresh } from './diff.js';
 
 // The content script is re-injected at the start of every MCP call. Reuse the
 // surface from a previous injection so a ref from an earlier snapshot stays
@@ -22,7 +23,14 @@ const state = surface?.state ?? {
   get revision() { return refs.revision; },
   refs,
   recovered: false,
-  lastCatalog: null
+  lastCatalog: null,
+  lastDigest: null,
+  lastDigestLimit: null,
+  lastDigestSignature: null,
+  digestAt: 0,
+  digestWanted: false,
+  digestCalledAt: 0,
+  digestInvalidated: false
 };
 
 const pointerController = createPointerController({
@@ -115,43 +123,164 @@ function box(element) {
   return boundingBox(element);
 }
 
-function catalogKey(item) {
-  return `${item.role}|${item.name}`;
-}
-
-function computeDiff(before, after) {
-  const beforeCounts = new Map();
-  for (const item of before) beforeCounts.set(catalogKey(item), (beforeCounts.get(catalogKey(item)) ?? 0) + 1);
-  const afterCounts = new Map();
-  for (const item of after) afterCounts.set(catalogKey(item), (afterCounts.get(catalogKey(item)) ?? 0) + 1);
-  const added = [];
-  const removed = [];
-  const changed = [];
-  for (const [key, count] of afterCounts) {
-    if (count > (beforeCounts.get(key) ?? 0)) added.push(key);
-  }
-  for (const [key, count] of beforeCounts) {
-    if (count > (afterCounts.get(key) ?? 0)) removed.push(key);
-  }
-  const previousValues = new Map(before.map(item => [catalogKey(item), item.value]));
-  const seen = new Set();
-  for (const item of after) {
-    const key = catalogKey(item);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (previousValues.has(key) && previousValues.get(key) !== item.value) {
-      changed.push({ key, from: previousValues.get(key), to: item.value });
-    }
-  }
-  const capped = list => list.slice(0, 20);
-  return { added: capped(added), removed: capped(removed), changed: capped(changed) };
-}
-
 function refreshCatalog() {
-  const after = discovery.catalog({ limit: 400 });
+  const after = discovery.catalogEntries({ limit: 400 });
   const before = state.lastCatalog;
   state.lastCatalog = after;
-  return before ? computeDiff(before, after) : null;
+  return before ? computeDiff(before, after, refs) : null;
+}
+
+// Roles an agent can act on. Kept local because snapshot.js does not export its
+// own role set.
+const DIGEST_INTERACTIVE_ROLES = new Set([
+  'button', 'link', 'textbox', 'searchbox', 'combobox', 'listbox', 'checkbox', 'radio',
+  'switch', 'slider', 'spinbutton', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+  'option', 'tab', 'treeitem'
+]);
+
+// Modals are appended late and stack, so the actionable dialog is the last
+// visible one — not simply the first match in the document.
+function dialogRoot() {
+  let nodes = [];
+  try {
+    nodes = Array.from(document.querySelectorAll('dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"]'));
+  } catch { return null; }
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    if (semantics.visible(nodes[index])) return nodes[index];
+  }
+  return null;
+}
+
+function digestDialog(dialog) {
+  if (!dialog) return null;
+  const heading = dialog.querySelector?.('h1,h2,h3,h4,[role="heading"]');
+  const label = dialog.getAttribute?.('aria-label') || dialog.getAttribute?.('title') || heading?.textContent || '';
+  return {
+    name: sanitizeText(label) || 'dialog',
+    modal: dialog.getAttribute?.('aria-modal') === 'true' || String(dialog.tagName).toLowerCase() === 'dialog'
+  };
+}
+
+// The AI-readable digest: the interactive controls plus their current values,
+// each already carrying a ref, so a caller can act without a snapshot first.
+function buildDigest(input = {}) {
+  const limit = Math.max(1, Math.min(Number(input.limit ?? 60) || 60, 200));
+  const dialog = dialogRoot();
+  // With a modal open the actionable controls live inside it, so scope the walk
+  // to the dialog rather than returning the whole page behind it (whose DOM
+  // order would otherwise push the dialog's own controls past the limit).
+  const entries = discovery.catalogEntries({
+    limit: 400,
+    scope: dialog ? 'dialog' : undefined,
+    goal: input.goal,
+    keywords: input.keywords,
+    relevantOnly: input.relevantOnly
+  });
+  const elements = [];
+  const seenCounts = new Map();
+  let total = 0;
+  for (const { item, element } of entries) {
+    if (!DIGEST_INTERACTIVE_ROLES.has(item.role) && item.value === undefined) continue;
+    total += 1;
+    // Position among same role+name lets a stale ref recover to the right
+    // duplicate (e.g. which Likert radio "4") instead of the first match.
+    const index = seenCounts.get(`${item.role}|${item.name}`) ?? 0;
+    seenCounts.set(`${item.role}|${item.name}`, index + 1);
+    if (elements.length >= limit) continue;
+    const entry = {
+      ref: refs.refFor(element, 'e', { role: item.role, name: item.name, index }),
+      role: item.role,
+      name: item.name
+    };
+    if (item.value !== undefined && item.value !== '') entry.value = item.value;
+    const tag = element.tagName.toLowerCase();
+    if (tag === 'input') {
+      entry.type = element.type;
+      if (element.checked) entry.checked = true;
+      if (element.disabled) entry.disabled = true;
+      if (element.required) entry.required = true;
+    } else if (tag === 'button' || tag === 'select' || tag === 'textarea') {
+      if (element.disabled) entry.disabled = true;
+    }
+    elements.push(entry);
+  }
+  return {
+    url: location.href,
+    title: document.title,
+    dialog: digestDialog(dialog),
+    revision: refs.revision,
+    elementCount: total,
+    elements
+  };
+}
+
+// Bound the signature work: hashing every control on a 400-control page on each
+// mutation burst is real cost, and the leading controls already decide freshness.
+const DIGEST_SIGNATURE_CAP = 60;
+const DIGEST_IDLE_MS = 30000;
+
+function digestSignature(result) {
+  const parts = [];
+  for (let index = 0; index < result.elements.length && index < DIGEST_SIGNATURE_CAP; index += 1) {
+    const item = result.elements[index];
+    parts.push(`${item.role}:${item.name}:${item.value ?? ''}:${item.checked ? 1 : 0}:${item.disabled ? 1 : 0}:${item.required ? 1 : 0}:${item.type ?? ''}`);
+  }
+  return `${result.url}|${result.dialog ? result.dialog.name : ''}|${result.elementCount}|${result.elements.length}|${parts.join(';')}`;
+}
+
+function digestLimit(input = {}) {
+  return Math.max(1, Math.min(Number(input.limit ?? 60) || 60, 200));
+}
+
+function digest(input = {}) {
+  state.digestWanted = true;
+  state.digestInvalidated = false;
+  state.digestCalledAt = Date.now();
+  const limit = digestLimit(input);
+  const ranked = Boolean(input.goal || input.keywords);
+  const warm = state.lastDigest;
+  // The observer keeps a digest warm after each DOM settle; reuse it while it
+  // still matches the live revision and the same limit, so a repeated call is a
+  // lookup rather than another DOM walk. A ranked request is never reused — its
+  // ordering depends on the caller's goal.
+  if (
+    warm && !ranked && warm.revision === refs.revision && state.lastDigestLimit === limit
+    && Date.now() - state.digestAt < 3000 && state.digestInvalidated !== true
+  ) return warm;
+  const result = buildDigest({ limit, goal: input.goal, keywords: input.keywords, relevantOnly: input.relevantOnly });
+  state.lastDigest = result;
+  state.lastDigestLimit = limit;
+  state.lastDigestSignature = digestSignature(result);
+  state.digestInvalidated = false;
+  state.digestAt = Date.now();
+  return result;
+}
+
+// Recomputed after a mutation burst, but only once a caller has actually asked
+// for a digest, so pages that never use the feature pay nothing. The signature
+// check skips the rebuild when nothing user-visible changed. After a spell with
+// no digest call the refresh disarms so a page the agent has left stops paying.
+function refreshDigest() {
+  if (!state.digestWanted) return;
+  if (Date.now() - (state.digestCalledAt ?? state.digestAt) > DIGEST_IDLE_MS) {
+    state.digestWanted = false;
+    state.lastDigest = null;
+    state.lastDigestSignature = null;
+    state.digestInvalidated = false;
+    return;
+  }
+  let next;
+  try {
+    next = buildDigest({ limit: state.lastDigestLimit ?? 60 });
+  } catch {
+    return;
+  }
+  const signature = digestSignature(next);
+  if (signature === state.lastDigestSignature) return;
+  state.lastDigestSignature = signature;
+  state.lastDigest = next;
+  state.digestInvalidated = false;
+  state.digestAt = Date.now();
 }
 
 function finish(payload) {
@@ -164,13 +293,20 @@ function finish(payload) {
 }
 
 function snapshot(input = {}) {
+  // `format: 'digest'` returns the warm AI-readable digest (interactive controls
+  // with refs plus value/checked/disabled state) instead of the element list.
+  if (input.format === 'digest') return digest(input);
   const result = discovery.snapshot(input);
   // Compact format returns { text, elementCount } without an `elements` array;
   // the old unconditional .map() crashed every compact snapshot (masked by
-  // callPage as "navigating or crashed" — the Azure-portal failures).
-  state.lastCatalog = (result.elements ?? []).map(item => (
-    item.value === undefined ? { role: item.role, name: item.name } : { role: item.role, name: item.name, value: item.value }
-  ));
+  // callPage as "navigating or crashed" — the Azure-portal failures). Keep a
+  // real baseline in that case: an empty baseline made the next diff report the
+  // whole page as freshly added.
+  state.lastCatalog = result.elements
+    ? result.elements.map(item => (
+        item.value === undefined ? { role: item.role, name: item.name } : { role: item.role, name: item.name, value: item.value }
+      ))
+    : discovery.catalogEntries({ limit: 400 });
   // Few elements in top frame + iframes present → the UI likely renders inside
   // an iframe; tell the caller to retry with frames: true instead of leaving
   // them with a near-empty tree and no explanation.
@@ -422,14 +558,25 @@ function resolveTarget(target) {
 // One primitive that finds the target, acts, re-resolves when the node was
 // replaced, waits for the DOM to settle, then reports the new ref and a diff so
 // the caller usually does not need a fresh snapshot.
+//
+// `refresh` decides how much page state comes back with the action:
+//   'auto'     (default) attach a compact snapshot only when the diff says the
+//              page actually moved under us — navigation, the acted-on element
+//              disappearing, or a large churn the diff alone cannot describe.
+//   'snapshot' always attach one (costs tokens, saves a round-trip).
+//   'none'     refs in the diff only.
+// The snapshot is taken with keepRefs so refs already in the caller's hand stay
+// valid instead of being invalidated by the very call that returned them.
 async function act(input = {}) {
   const action = String(input.action ?? 'click');
+  const refreshMode = String(input.refresh ?? 'auto');
   const target = {
     ref: input.target?.ref ?? input.ref ?? null,
     selector: input.target?.selector ?? input.selector ?? null,
     revision: input.target?.revision ?? input.revision
   };
-  const before = discovery.catalog({ limit: 400 });
+  const urlBefore = location.href;
+  const before = discovery.catalogEntries({ limit: 400 });
   const { element, recovered } = resolveTarget(target);
   if (recovered) state.recovered = true;
 
@@ -482,17 +629,44 @@ async function act(input = {}) {
     settled = await waitFor({ state: input.waitState ?? 'dom_stable', timeoutMs: input.timeoutMs ?? 3000, stableMs: input.stableMs ?? 150 });
   }
 
-  const after = discovery.catalog({ limit: 400 });
+  const after = discovery.catalogEntries({ limit: 400 });
   state.lastCatalog = after;
-  const diff = computeDiff(before, after);
+  const diff = computeDiff(before, after, refs);
   const changed = diff.added.length + diff.removed.length + diff.changed.length > 0;
   const nextRef = element.isConnected && typeof element.tagName === 'string'
     ? refs.refFor(element, 'e', { role: semantics.role(element), name: semantics.name(element) })
     : null;
+
+  // The diff is enough while the page held still and the acted-on element is
+  // still there. Anything else means the model is now looking at a page it has
+  // never seen, so hand it one rather than making it ask again.
+  const wantsSnapshot = shouldRefresh({
+    mode: refreshMode,
+    navigated: location.href !== urlBefore,
+    targetGone: nextRef === null,
+    churn: diff.added.length + diff.removed.length
+  });
+  let refreshed = null;
+  let digestState = null;
+  if (wantsSnapshot) {
+    if (refreshMode === 'digest') {
+      // The digest is cheap enough to attach unconditionally; it reflects the
+      // post-action controls with fresh refs so the caller need not snapshot.
+      digestState = digest({ limit: 60 });
+    } else {
+      // The compact payload carries `text`, not `elements`; nothing changed
+      // between the catalog pass above and this snapshot, so `state.lastCatalog`
+      // already holds the baseline for the next diff.
+      refreshed = discovery.snapshot({ keepRefs: true, format: 'compact', limit: 150 });
+    }
+  }
+
   const result = { changed, action, revision: state.revision, ref: nextRef, diff };
   if (detail !== null) result.value = detail;
   if (settled) result.settled = settled.satisfied;
   if (state.recovered) { result.recovered = true; state.recovered = false; }
+  if (refreshed) result.snapshot = refreshed;
+  if (digestState) result.digest = digestState;
   return result;
 }
 
@@ -527,9 +701,28 @@ function upload(input = {}, files) {
   return finish({ changed: true, count: element.files.length });
 }
 
+function find(input = {}) {
+  return discovery.find(input);
+}
+
 function network(input = {}) {
   const entries = typeof performance.getEntriesByType === 'function' ? performance.getEntriesByType('resource') : [];
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
+if (!state.observer) {
+  // Re-injection would otherwise stack one observer per MCP call.
+  state.observer = new MutationObserver(() => {
+    state.digestInvalidated = true;
+    clearTimeout(state.quietTimer);
+    // Only refresh the warm digest; refs are no longer reset here — a live
+    // element stays resolvable until it leaves the DOM, so a page whose
+    // countdown/carousel mutates every second no longer expires every ref.
+    state.quietTimer = setTimeout(() => { refreshDigest(); }, 100);
+  });
+  // Attributes and character data too: SPA controls often flip aria-expanded,
+  // value, or checked without touching childList, and those are exactly the
+  // changes the digest exists to surface.
+  state.observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+}

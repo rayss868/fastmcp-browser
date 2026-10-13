@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { detectBrowser, createSessionManager } from '../src/session.js';
+import { detectBrowser, createSessionManager, SESSION_STORAGE_KEY } from '../src/session.js';
 
 function createStorage(seed = {}) {
   const data = structuredClone(seed);
@@ -170,6 +170,32 @@ test('openTab reuses the live automation tab, including concurrent opens', async
   assert.equal(second.id, created[0].id);
   assert.deepEqual(updated, [{ tabId: created[0].id, url: 'https://second.test' }]);
   assert.deepEqual((await session.info()).tabIds, [created[0].id]);
+});
+
+test('openTab reuses a grouped tab the session had not recorded yet', async () => {
+  const storage = createStorage({
+    [SESSION_STORAGE_KEY]: { id: 's-seeded', groupId: 7, groupTitle: 'Automation', tabIds: [] }
+  });
+  const api = createNativeApi(storage);
+  api.groups.set(7, new Set([55]));
+  api.alive.add(55);
+  const created = [];
+  let nextTabId = 60;
+  api.tabs.create = async properties => {
+    const tab = { id: nextTabId++, url: properties.url, active: properties.active };
+    created.push(tab);
+    api.alive.add(tab.id);
+    return tab;
+  };
+  api.tabs.update = async (tabId, properties) => ({ id: tabId, ...properties });
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  const tab = await session.openTab('https://reuse.test');
+
+  // Regression: s.tabIds was empty, so the old code created a duplicate tab
+  // even though tab 55 was already sitting in the Automation group.
+  assert.equal(created.length, 0);
+  assert.equal(tab.id, 55);
 });
 
 test('session persists across manager instances', async () => {

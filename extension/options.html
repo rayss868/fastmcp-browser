@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FastMCP Browser — Redaction Rules</title>
+  <style>
+    :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+    body { max-width: 760px; margin: 0 auto; padding: 28px 20px 60px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .muted { opacity: .7; margin: 0 0 20px; }
+    hr { border: 0; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); margin: 24px 0; }
+
+    #rule-form { display: grid; gap: 14px; padding: 18px; border-radius: 10px; margin-bottom: 22px; background: color-mix(in srgb, currentColor 6%, transparent); }
+    #rule-form[hidden] { display: none; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .field { display: grid; gap: 6px; }
+    .field > span { font-size: 12px; opacity: .7; text-transform: uppercase; letter-spacing: .03em; }
+    input[type="text"] { padding: 8px 10px; border-radius: 7px; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); background: transparent; color: inherit; font: inherit; }
+
+    .dropdown { position: relative; }
+    .dropdown-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 7px; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); background: color-mix(in srgb, currentColor 6%, transparent); color: inherit; font: inherit; cursor: pointer; text-align: left; }
+    .dropdown-trigger:hover { border-color: color-mix(in srgb, currentColor 42%, transparent); }
+    .dropdown.open .dropdown-trigger { border-color: #2d7dff; }
+    .dropdown-chevron { flex: none; width: 8px; height: 8px; margin-top: -4px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); opacity: .7; transition: transform .15s ease; }
+    .dropdown.open .dropdown-chevron { margin-top: 4px; transform: rotate(-135deg); }
+    .dropdown-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); background: Canvas; color: CanvasText; box-shadow: 0 10px 26px rgba(0, 0, 0, .35); max-height: 240px; overflow: auto; }
+    .dropdown-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+    .dropdown-option.active { background: color-mix(in srgb, currentColor 12%, transparent); }
+    .dropdown-option.selected { color: #2d7dff; font-weight: 600; }
+    .dropdown-check { flex: none; opacity: 0; }
+    .dropdown-option.selected .dropdown-check { opacity: 1; }
+    .check { display: flex; align-items: center; gap: 8px; }
+    .actions { display: flex; gap: 10px; }
+    button { padding: 8px 14px; border-radius: 7px; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+    button.primary { background: color-mix(in srgb, #2d7dff 85%, transparent); border-color: transparent; color: #fff; }
+    .hint { font-size: 12px; opacity: .6; }
+    .error { color: #d33; font-size: 12px; }
+
+    #rule-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    .rule { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 9px; background: color-mix(in srgb, currentColor 5%, transparent); }
+    .rule.off { opacity: .55; }
+    .rule .summary { overflow-wrap: anywhere; }
+    .rule .scope { display: block; font-size: 12px; opacity: .6; margin-top: 2px; }
+    .rule-actions { display: flex; gap: 6px; }
+    .empty { opacity: .6; }
+  </style>
+</head>
+<body>
+  <h1>Redaction Rules</h1>
+  <p class="muted">A page can try to talk to your agent through its own text — that is prompt injection. Add rules to replace or hide that text before the AI ever reads it. The real page is never changed; only the data sent to the agent is.</p>
+
+  <div class="actions" style="margin-bottom:18px">
+    <button id="add-rule" class="primary" type="button">+ Add rule</button>
+  </div>
+
+  <form id="rule-form" hidden>
+    <div class="grid2">
+      <div class="field"><span>Action</span>
+        <div id="f-action" data-dropdown="Action"></div>
+      </div>
+      <div class="field"><span>Match</span>
+        <div id="f-match" data-dropdown="Match"></div>
+      </div>
+    </div>
+    <label class="field"><span>Pattern</span>
+      <input id="f-pattern" type="text" placeholder="e.g. &quot;Sponsor&quot; or \\d{4}-\\d{4}-\\d{4}-\\d{4}" autocomplete="off">
+    </label>
+    <label class="field" id="f-replacement-wrap"><span>Replace with</span>
+      <input id="f-replacement" type="text" placeholder="[REDACTED]" autocomplete="off">
+    </label>
+    <div class="grid2">
+      <div class="field"><span>Scope</span>
+        <div id="f-scope" data-dropdown="Scope"></div>
+      </div>
+      <label class="field" id="f-domain-wrap" hidden><span>Domain</span>
+        <div style="display:flex;gap:8px">
+          <input id="f-domain" type="text" placeholder="example.com" autocomplete="off">
+          <button id="f-domain-current" type="button" title="Fill from the active tab">Active tab</button>
+        </div>
+      </label>
+    </div>
+    <label class="check"><input id="f-case" type="checkbox"> Case sensitive</label>
+    <p class="error" id="f-error" hidden></p>
+    <div class="actions">
+      <button id="f-save" class="primary" type="submit">Save</button>
+      <button id="f-cancel" type="button">Cancel</button>
+    </div>
+  </form>
+
+  <ul id="rule-list"></ul>
+  <p class="empty" id="rule-empty">No rules yet.</p>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

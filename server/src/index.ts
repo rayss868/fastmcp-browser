@@ -6,7 +6,6 @@ import { TOOL_NAMES, TOOL_DOCS, callBrowserTool } from './tools.js';
 import { recordingStatus, startRecording, stopRecording } from './recorder.js';
 
 const port = Number(process.env.FASTMCP_PORT ?? 9229);
-
 function handleControl(name: string, params: Record<string, unknown>): unknown {
   if (name !== 'record') {
     throw Object.assign(new Error(`Unknown control: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
@@ -23,7 +22,7 @@ function handleControl(name: string, params: Record<string, unknown>): unknown {
 }
 
 const bridge = createBridge(port, undefined, { control: handleControl });
-const server = new McpServer({ name: 'fastmcp-browser', version: '0.4.3' });
+const server = new McpServer({ name: 'fastmcp-browser', version: '0.4.7' });
 
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
 const revision = z.number().int().optional().describe('Snapshot revision used to reject stale refs.');
@@ -50,11 +49,31 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     maxDepth: z.number().int().min(1).max(50).optional().describe('Maximum ancestor depth from the document root.'),
     limit: z.number().int().min(1).max(1000).optional().describe('Maximum number of elements to return.'),
     boundingBox: z.boolean().optional().describe('Include each element bounding box (set automatically in visual mode).'),
-    format: z.enum(['compact']).optional().describe('Return one compact line per element instead of a JSON array to save tokens.'),
+    format: z.enum(['compact', 'digest']).optional().describe('compact: one line per element instead of a JSON array. digest: only the interactive controls with refs and their value/checked/disabled state, kept warm as the DOM settles — the light way to orient before acting.'),
     frames: z.boolean().optional().describe('Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN.'),
-    mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.')
+    mode: z.enum(['visual']).optional().describe('Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map.'),
+    goal: z.string().optional().describe('Short phrase describing the objective; candidates are ranked by relevance so a limit cuts from the most relevant end.'),
+    keywords: z.array(z.string()).optional().describe('Extra relevance terms used with goal when ranking candidates.'),
+    relevantOnly: z.boolean().optional().describe('With goal, return only the elements that match it; falls back to every candidate if that would come back empty.')
   }),
-  browser_inventory: z.object({ tabId, boundingBox: z.boolean().optional() }),
+  browser_find: z.object({
+    tabId,
+    text: z.string().optional().describe('Case-insensitive substring to look for. Provide exactly one of text or regex.'),
+    regex: z.string().optional().describe('Regular expression to match against role and name, case-insensitive unless caseSensitive is set. Provide exactly one of text or regex.'),
+    caseSensitive: z.boolean().optional().describe('Make regex matching case-sensitive (default false). Ignored for text.'),
+    limit: z.number().int().min(1).max(100).optional().describe('Maximum matches to return (default 20).'),
+    goal: z.string().optional().describe('Short phrase describing the objective; ranks matches by relevance.'),
+    relevantOnly: z.boolean().optional().describe('Drop matches that do not relate to goal/keywords.'),
+    selector
+  }),
+  browser_inventory: z.object({
+    tabId,
+    boundingBox: z.boolean().optional(),
+    filter: z.enum(['all', 'interactive', 'viewport', 'forms', 'buttons', 'links', 'headings', 'text']).optional().describe('Restrict the inventory to a category; "interactive" or "viewport" keeps the response small.'),
+    goal: z.string().optional().describe('Short phrase describing the objective; groups are ranked by relevance the same way browser_snapshot ranks candidates.'),
+    keywords: z.array(z.string()).optional().describe('Extra relevance terms used with goal when ranking the inventory.'),
+    relevantOnly: z.boolean().optional().describe('With goal/keywords, drop everything that does not match.')
+  }),
   browser_click: pageInput,
   browser_pointer_move: z.object({ tabId, x: z.number(), y: z.number(), buttons: z.number().int().optional() }),
   browser_pointer_click: z.object({ tabId, x: z.number(), y: z.number(), button: z.enum(['left', 'middle', 'right']).optional(), clickCount: z.number().int().positive().optional() }),
@@ -85,7 +104,8 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     waitAfter: z.boolean().optional().describe('Wait for the DOM to settle after acting (default true).'),
     waitState: z.enum(['dom_stable', 'network_idle']).optional().describe('Settle condition to wait on (default dom_stable).'),
     timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum settle wait in milliseconds (default 3000).'),
-    stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).')
+    stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle (default 150).'),
+    refresh: z.enum(['auto', 'snapshot', 'digest', 'none']).optional().describe('Post-action page state: "auto" (default) attaches a compact snapshot only when the page moved; "snapshot" always attaches one; "digest" attaches the light interactive-control digest; "none" returns refs only.')
   }),
   browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").'), selector: z.string().optional().describe('CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale. Works on CSP-restricted pages where browser_evaluate cannot run.') }),
   browser_scroll: z.object({ tabId, x: z.number().optional(), y: z.number().optional() }),
@@ -120,12 +140,29 @@ for (const name of TOOL_NAMES) {
   schemas[name] = schemas[name].extend(TARGET_ZOD);
 }
 
+function toMcpContent(result: unknown): Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> {
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const record = result as Record<string, unknown>;
+    if (typeof record.dataUrl === 'string') {
+      const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]*)$/.exec(record.dataUrl);
+      if (match) {
+        const { dataUrl: _dataUrl, ...metadata } = record;
+        return [
+          { type: 'image' as const, data: match[2], mimeType: match[1] },
+          { type: 'text' as const, text: JSON.stringify(metadata) },
+        ];
+      }
+    }
+  }
+  return [{ type: 'text' as const, text: JSON.stringify(result ?? null) }];
+}
+
 for (const name of TOOL_NAMES) {
   const inputSchema = schemas[name];
   server.registerTool(name, { description: TOOL_DOCS[name] ?? `FastMCP Browser ${name}`, inputSchema }, async (args: Record<string, unknown>) => {
     try {
       const result = await callBrowserTool(bridge, name, args);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result ?? null) }] };
+      return { content: toMcpContent(result) };
     } catch (error) {
       return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ code: (error as { code?: string }).code ?? 'ACTION_TIMEOUT', message: error instanceof Error ? error.message : String(error) }) }] };
     }

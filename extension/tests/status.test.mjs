@@ -9,11 +9,22 @@ const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 test('status UI is packaged and exposes required fields', async () => {
   const html = await readFile(resolve(root, 'status.html'), 'utf8');
   const script = await readFile(resolve(root, 'src/status.js'), 'utf8');
-  for (const id of ['connection', 'browser', 'profile', 'protocol', 'tabs', 'capabilities', 'disconnect']) {
+  for (const id of ['connection', 'browser', 'profile', 'protocol', 'tabs', 'capabilities', 'release', 'disconnect']) {
     assert.equal(html.includes(`id="${id}"`), true, id);
   }
   assert.match(script, /status\.get/);
   assert.match(script, /browser_disconnect/);
+});
+
+test('status popup checks GitHub Releases and only links newer versions', async () => {
+  const script = await readFile(resolve(root, 'src/status.js'), 'utf8');
+  const manifest = await readFile(resolve(root, 'manifest.firefox.json'), 'utf8');
+  assert.match(script, /api\.github\.com\/repos\/rayss868\/fastmcp-browser\/releases\/latest/);
+  assert.match(script, /compareVersions\(match\[1\], installed\) <= 0/);
+  assert.match(script, /Versi baru tersedia/);
+  assert.match(script, /createElement\('a'\)/);
+  assert.match(script, /getManifest\(\)\.version/);
+  assert.match(manifest, /connect-src[^;]*https:\/\/api\.github\.com/);
 });
 
 test('status popup refreshes live instead of rendering once on open', async () => {

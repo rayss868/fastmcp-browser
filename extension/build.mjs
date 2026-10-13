@@ -31,6 +31,7 @@ async function copyContentEngine(out) {
     'content/pointer.js',
     'content/files.js',
     'content/network.js',
+    'content/diff.js',
     'content/engine.js'
   ];
   const chunks = [];
@@ -56,9 +57,13 @@ async function build(target) {
   await copyFile(resolve(source, 'page-result.js'), resolve(out, 'page-result.js'));
   await copyFile(resolve(source, 'router.js'), resolve(out, 'router.js'));
   await copyFile(resolve(source, 'session.js'), resolve(out, 'session.js'));
+  await copyFile(resolve(source, 'wait.js'), resolve(out, 'wait.js'));
   await copyFile(resolve(source, 'network-monitor.js'), resolve(out, 'network-monitor.js'));
   await copyFile(resolve(source, 'screenshot.js'), resolve(out, 'screenshot.js'));
   await copyFile(resolve(source, 'evaluate.js'), resolve(out, 'evaluate.js'));
+  await copyFile(resolve(source, 'redact.js'), resolve(out, 'redact.js'));
+  await copyFile(resolve(source, 'rules-store.js'), resolve(out, 'rules-store.js'));
+  await copyFile(resolve(source, 'dropdown.js'), resolve(out, 'dropdown.js'));
   await copyFile(resolve(source, 'adapters/compatibility.js'), resolve(out, 'adapters/compatibility.js'));
   await copyFile(resolve(source, 'adapters/runtime.js'), resolve(out, 'adapters/runtime.js'));
   await copyFile(resolve(source, `${target === 'firefox' ? 'adapters/firefox.js' : 'adapters/chromium.js'}`), resolve(out, `adapters/${target}.js`));
@@ -67,6 +72,8 @@ async function build(target) {
   await copyFile(resolve(source, 'content/fingerprint.js'), resolve(out, 'src/content/fingerprint.js'));
   await copyFile(resolve(source, 'status.js'), resolve(out, 'status.js'));
   await copyFile(resolve(extension, 'status.html'), resolve(out, 'status.html'));
+  await copyFile(resolve(source, 'options.js'), resolve(out, 'options.js'));
+  await copyFile(resolve(extension, 'options.html'), resolve(out, 'options.html'));
   await mkdir(resolve(out, 'icons'), { recursive: true });
   for (const size of [16, 32, 48, 128]) {
     await copyFile(resolve(extension, `assets/icons/icon-${size}.png`), resolve(out, `icons/icon-${size}.png`));

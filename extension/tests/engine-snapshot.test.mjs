@@ -59,7 +59,9 @@ test('snapshot tolerates format:compact, which carries no elements array', () =>
   assert.equal(compact.elements, undefined, 'compact shape genuinely has no elements');
   assert.equal(typeof compact.text, 'string');
   assert.equal(compact.elementCount, nodes.length);
-  assert.deepEqual(engine.state.lastCatalog, [], 'the catalog must degrade to empty, not throw');
+  // Upstream keeps a real baseline here rather than an empty one: an empty
+  // catalog made the next action diff report the whole page as freshly added.
+  assert.equal(engine.state.lastCatalog.length, nodes.length, 'compact must not throw and keeps a usable catalog baseline');
 });
 
 test('the default JSON shape still populates the action-diff catalog', () => {

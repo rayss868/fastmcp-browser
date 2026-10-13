@@ -8,7 +8,7 @@ import { startRecording, stopRecording, recordingStatus } from '../dist/src/reco
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 32);
+  assert.equal(TOOL_NAMES.length, 33);
 });
 
 test('browser_fill_form batches fields and an optional submit in one call', () => {
@@ -25,6 +25,19 @@ test('browser_fill_form batches fields and an optional submit in one call', () =
   assert.ok(items.properties.selector?.description, 'browser_fill_form.fields[].selector missing description');
   assert.ok(items.properties.value?.description, 'browser_fill_form.fields[].value missing description');
   assert.deepEqual(items.required, ['value']);
+});
+
+test('the digest is a snapshot format, not a standalone tool', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  assert.equal(byName.get('browser_digest'), undefined, 'browser_digest must not be a separate tool');
+  const snapshot = byName.get('browser_snapshot')!;
+  const props = snapshot.inputSchema.properties as Record<string, { enum?: string[]; description?: string }>;
+  assert.ok(props.format?.enum?.includes('digest'), 'browser_snapshot.format must offer a digest mode');
+  assert.match(String(props.format?.description), /digest/i);
+  assert.match(snapshot.description, /digest/i, 'the snapshot description must steer toward the digest');
+  const act = byName.get('browser_act')!;
+  const actProps = act.inputSchema.properties as Record<string, { enum?: string[] }>;
+  assert.ok(actProps.refresh?.enum?.includes('digest'), 'browser_act.refresh must offer a digest mode');
 });
 
 test('browser_evaluate accepts an optional ref and revision for element-scoped evaluation', () => {
@@ -99,6 +112,21 @@ test('documented tools expose described input schema properties', () => {
   const evaluateProps = evaluate.inputSchema.properties as Record<string, { description?: string }>;
   assert.match(String(evaluateProps.expression?.description), /10000|expression/i);
   assert.deepEqual(evaluate.inputSchema.required, ['expression']);
+});
+
+test('ranking and filter params documented in the tool docs exist in the schemas', () => {
+  // These were documented and implemented in the page engine but dropped from
+  // the schemas, so zod stripped them before they ever reached the extension.
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const props = (name: string) => byName.get(name)!.inputSchema.properties as Record<string, { description?: string }>;
+
+  for (const field of ['goal', 'keywords', 'relevantOnly']) {
+    assert.ok(props('browser_snapshot')[field]?.description, `browser_snapshot.${field} missing from the schema`);
+    assert.ok(props('browser_find')[field]?.description, `browser_find.${field} missing from the schema`);
+    assert.ok(props('browser_inventory')[field]?.description, `browser_inventory.${field} missing from the schema`);
+  }
+  assert.ok(props('browser_inventory').filter?.description, 'browser_inventory.filter missing from the schema');
+  assert.ok(props('browser_act').refresh?.description, 'browser_act.refresh missing from the schema');
 });
 
 test('registry documents the composite act and framework inspect tools', () => {

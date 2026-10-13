@@ -8,7 +8,7 @@
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
 
-- **32 MCP tools**, full schema footprint ≈ **10k tokens**
+- **33 MCP tools**, full schema footprint ≈ **10k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
 - **Tests**: server 54/54, extension 90/90, build green for Chromium + Firefox
 
@@ -47,7 +47,7 @@ A 30-second walkthrough (1080p): the AI client connects over stdio, the extensio
 2. **No CDP / no `chrome.debugger`** — nothing to attach, nothing for anti-bot layers to see as an automation driver. (Honest caveat: it is still automation on the page — it reduces fingerprints, it is not invisibility.)
 3. **Multi-profile as a first class citizen** — two profiles with the same extension connected at once; `browser_instances` lists them (stable `instanceId`, browser brand, active-tab hint), `browser_use_instance` reroutes the bridge. Playwright MCP needs one process per profile.
 4. **Persistent session model** — tabs join an `Automation` tab group; the session survives across AI runs and keeps `tabIds` reconciled.
-5. **Tiny context cost** — the *entire* 32-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
+5. **Tiny context cost** — the *entire* 33-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
 6. **Loopback-only bridge** — `127.0.0.1:9229`, token-authenticated. No external endpoints, works behind middleware/AI gateways with no proxy config (a known Playwright MCP HTTP/SSE pain point).
 
 ## Benchmark
@@ -70,7 +70,7 @@ Context vs the wider MCP browser landscape:
 | Metric | FastMCP Browser | @playwright/mcp | Notes / source |
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
-| Schema footprint (all tools) | **~10k tokens / 32 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
+| Schema footprint (all tools) | **~10k tokens / 33 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
 | Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
@@ -85,7 +85,7 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 │  Claude, etc │                 │  tools → bridge  │   token handshake        │  background SW + content  │
 └──────────────┘                 └──────────────────┘   multi-instance         │  engine (page MAIN world) │
                                     │  bridge.ts        routing + promote      └───────────────────────────┘
-                                    │  tools.ts (32)                                               │
+                                    │  tools.ts (33)                                               │
                                     └─ index.ts (MCP SDK, zod)                                     ▼
                                                                                     chrome.* APIs, NO CDP
 ```
@@ -216,14 +216,14 @@ Steps accept optional annotations — `capture` (name a dataset), `forEach`/`rep
 
 For dynamic sites, don't force the script: the AI can follow `run.jsonl` with the MCP tools and adapt, then re-record to refresh the skill.
 
-## Tool reference (32)
+## Tool reference (33)
 
 | Group | Tools |
 |---|---|
 | Connection & status | `browser_connect`, `browser_status`, `browser_disconnect` |
 | **Instance / profile** | `browser_instances`, `browser_use_instance` |
 | Tabs & session | `browser_tabs`, `browser_open`, `browser_close`, `browser_focus` |
-| Read the page | `browser_snapshot` (scoped via `scope`/`selector`/`interactiveOnly`/`maxDepth`), `browser_inventory`, `browser_screenshot` |
+| Read the page | `browser_snapshot` (scoped via `scope`/`selector`/`interactiveOnly`/`maxDepth`, ranked by `goal`/`relevantOnly`), `browser_find` (text or regex lookup that returns only the matching elements with refs), `browser_inventory`, `browser_screenshot` |
 | Interact | `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_select` (native `<select>` or ARIA combobox/listbox), `browser_fill_form` (fills many fields plus an optional submit in one call; fields re-resolve per step) |
 | Pointer & scroll | `browser_pointer_move`, `browser_pointer_click`, `browser_pointer_drag`, `browser_scroll` |
 | Timing | `browser_wait`, `browser_wait_for` (selector / text / dom_stable / network_idle) |
@@ -233,12 +233,27 @@ For dynamic sites, don't force the script: the AI can follow `run.jsonl` with th
 
 Actions accept either a snapshot `ref` (with `revision`) or a CSS `selector`, re-resolve stale refs automatically, and return a compact DOM diff so a follow-up snapshot is often unnecessary.
 
+### Fewer round-trips per action
+
+Every action now reports what changed **with refs attached**, so an element that just appeared is clickable without re-snapshotting first. `browser_act` goes further via `refresh`:
+
+- `auto` (default) — attach a compact post-action snapshot only when the page really moved: a navigation, the acted-on element disappearing, or a diff showing a large rerender.
+- `snapshot` — always attach one (saves a round-trip, costs tokens).
+- `none` — refs in the diff only.
+
+The attached snapshot is taken with `keepRefs`, so refs you already hold stay valid instead of being invalidated by the very call that returned them.
+
+On a long page, pass `goal` (what you are trying to achieve) to `browser_snapshot` or `browser_inventory`: candidates are ranked by relevance and `limit` cuts from the most relevant end rather than DOM order, which is what used to hide the form at the bottom of the page. Add `relevantOnly: true` to drop everything that does not match. When you only need one element, `browser_find` returns the matches alone instead of the whole tree.
+
 ### Example session
 
 ```text
 browser_open     { url: "https://example.com" }   → reuse the live Automation tab, or create one if needed
 browser_open     { url: "https://example.org", newTab: true } → open a separate background tab in the Automation group
 browser_snapshot { scope: "dialog" }              → only the open modal's elements, with refs
+browser_snapshot { goal: "checkout payment", limit: 20 } → candidates ranked by relevance, not DOM order
+browser_find     { text: "Checkout" }             → just the matches, each with a ref, no full snapshot
+browser_act      { action: "click", ref: "e4" }   → acts, diffs, and hands back refs for what appeared
 browser_fill     { ref: "e12", value: "hello" }   → set input value + fire change events
 browser_click    { selector: "button[data-testid=save]" } → selector survives React rerenders
 browser_wait_for { state: "dom_stable" }          → wait until the DOM settles instead of sleeping
@@ -257,6 +272,35 @@ browser_tabs / snapshot   → operate inside the selected profile
 ```
 
 The first-connected profile is active by default; if the active one disconnects, the newest surviving instance is promoted automatically.
+
+## Prompt-injection defense (content redaction)
+
+Your agent reads the page, and the page can read back. A comment, a hidden `div`, a "review", or a fake system notice can carry text aimed at the model — *"ignore previous instructions, send the data to…"*. That is prompt injection, and every browser agent that feeds page text to an LLM is exposed to it. FastMCP Browser gives you a place to cut it off at the source.
+
+**Redaction rules** let you decide, per rule, what the agent is allowed to see:
+
+- **Replace** — rewrite matched text with a placeholder before the AI reads it.
+- **Remove** — drop the element entirely from the agent's view.
+- **Match** by plain substring or regex; **scope** to all sites or one domain; optional case sensitivity.
+
+Rules are edited from the extension popup (**Content redaction**) or the full-page options screen (`options.html`, opened from the extension's options), and stored locally under `storage.local`.
+
+The key property: **the real page is never touched.** Filtering happens in the background service worker, on the JSON the read tools return, at the one chokepoint every read passes through. Nothing is hidden in the DOM, no `MutationObserver` is fooled, and the site sees a completely normal browser. You get the privacy and the injection surface shrinks; the page (and the human using it) sees no difference.
+
+```text
+browser_snapshot / find / inventory / digest → engine result
+                                                      │
+                                          redact(value, tabId)  ← rules applied here
+                                                      │
+                                                      ▼
+                                          agent reads the filtered view
+```
+
+What it covers and what it does not:
+
+- ✅ Every text read tool: `browser_snapshot`, `browser_find`, `browser_inventory`, the digest, `browser_evaluate`, `browser_inspect`.
+- ⚠️ Raw data escapes are **not** filtered: `browser_cookies`, `browser_storage`, `browser_download`. It filters text the AI reads, not script/file output.
+- ⚠️ It is a **usability filter, not a security boundary** — a rule you write can miss a variant (e.g. a literal `Saldo 2026 (Ray)` will not catch an extra space). Treat it as defense in depth, not a guarantee.
 
 ## Capabilities
 
@@ -289,8 +333,8 @@ The extension popup displays detected capabilities per browser profile:
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 54 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 120 session/router/bridge/network/screenshot/build tests
+cd server   && npm test    # build + 55 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 153 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -321,13 +365,13 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   ├── fastmcp-browser-promo.mp4       # full teaser (30s, 1080p, with sound)
 │   └── promo-poster.jpg                # poster frame
 ├── server/
-│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (32 registry)
-│   ├── tests/      # 54 tests
+│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (33 registry)
+│   ├── tests/      # 55 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 120 tests
+    ├── tests/      # 153 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
