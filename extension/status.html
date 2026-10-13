@@ -5,7 +5,7 @@
   <title>FastMCP Browser</title>
   <style>
     :root { color-scheme: light dark; font: 13px system-ui, sans-serif; }
-    body { min-width: 320px; margin: 0; padding: 16px; }
+    body { min-width: 340px; max-width: 380px; margin: 0; padding: 16px; }
     h1 { font-size: 16px; margin: 0 0 12px; }
     dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 10px; }
     dt { opacity: .7; }
@@ -15,6 +15,47 @@
     #release { margin-top: 12px; padding: 10px; border-radius: 6px; background: color-mix(in srgb, #e6a700 18%, transparent); }
     #release[hidden] { display: none; }
     #release a { color: inherit; }
+
+    hr { border: 0; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); margin: 18px 0 14px; }
+    .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .section-head h2 { font-size: 13px; margin: 0; }
+    .section-head button { margin: 0; width: auto; padding: 4px 10px; }
+    .muted { opacity: .65; font-size: 12px; margin: 4px 0 10px; }
+
+    #rule-form { display: grid; gap: 8px; padding: 12px; border-radius: 8px; margin-bottom: 12px; background: color-mix(in srgb, currentColor 6%, transparent); }
+    #rule-form[hidden] { display: none; }
+    .field { display: grid; gap: 4px; }
+    .field > span { font-size: 11px; opacity: .7; text-transform: uppercase; letter-spacing: .03em; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    input[type="text"] { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); background: transparent; color: inherit; font: inherit; }
+
+    .dropdown { position: relative; }
+    .dropdown-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); background: color-mix(in srgb, currentColor 6%, transparent); color: inherit; font: inherit; cursor: pointer; text-align: left; }
+    .dropdown-trigger:hover { border-color: color-mix(in srgb, currentColor 42%, transparent); }
+    .dropdown.open .dropdown-trigger { border-color: #2d7dff; }
+    .dropdown-chevron { flex: none; width: 7px; height: 7px; margin-top: -3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); opacity: .7; transition: transform .15s ease; }
+    .dropdown.open .dropdown-chevron { margin-top: 3px; transform: rotate(-135deg); }
+    .dropdown-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); background: Canvas; color: CanvasText; box-shadow: 0 10px 26px rgba(0, 0, 0, .35); max-height: 200px; overflow: auto; }
+    .dropdown-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .dropdown-option.active { background: color-mix(in srgb, currentColor 12%, transparent); }
+    .dropdown-option.selected { color: #2d7dff; font-weight: 600; }
+    .dropdown-check { flex: none; opacity: 0; }
+    .dropdown-option.selected .dropdown-check { opacity: 1; }
+    .check { display: flex; align-items: center; gap: 8px; }
+    .check input { margin: 0; }
+    .form-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .form-actions button { margin: 0; }
+    .hint { font-size: 11px; opacity: .6; }
+
+    #rule-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+    .rule { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; background: color-mix(in srgb, currentColor 5%, transparent); }
+    .rule.off { opacity: .55; }
+    .rule .summary { font-size: 12px; overflow-wrap: anywhere; }
+    .rule .scope { display: block; font-size: 11px; opacity: .6; }
+    .rule-actions { display: flex; gap: 4px; }
+    .rule-actions button { margin: 0; width: auto; padding: 4px 8px; font-size: 12px; }
+    .empty { opacity: .6; font-size: 12px; margin: 0; }
+    .invalid { color: #d33; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -30,6 +71,48 @@
   </dl>
   <pre id="capabilities">Loading capabilities...</pre>
   <p id="release" role="status" hidden></p>
+
+  <hr>
+  <div class="section-head">
+    <h2>Content redaction</h2>
+    <button id="add-rule" type="button">+ Add</button>
+  </div>
+  <p class="muted">Keep prompt injection out of the agent. Rules rewrite or hide page text before the AI reads it — the real page is never changed.</p>
+
+  <form id="rule-form" hidden>
+    <div class="field-row">
+      <div class="field"><span>Action</span>
+        <div id="f-action" data-dropdown="Action"></div>
+      </div>
+      <div class="field"><span>Match</span>
+        <div id="f-match" data-dropdown="Match"></div>
+      </div>
+    </div>
+    <label class="field"><span>Pattern</span>
+      <input id="f-pattern" type="text" placeholder="e.g. &quot;Sponsor&quot; or \\d{4}-\\d{4}-\\d{4}-\\d{4}" autocomplete="off">
+    </label>
+    <label class="field" id="f-replacement-wrap"><span>Replace with</span>
+      <input id="f-replacement" type="text" placeholder="[REDACTED]" autocomplete="off">
+    </label>
+    <div class="field-row">
+      <div class="field"><span>Scope</span>
+        <div id="f-scope" data-dropdown="Scope"></div>
+      </div>
+      <label class="field" id="f-domain-wrap" hidden><span>Domain</span>
+        <input id="f-domain" type="text" placeholder="example.com" autocomplete="off">
+      </label>
+    </div>
+    <label class="check"><input id="f-case" type="checkbox"> Case sensitive</label>
+    <p class="hint" id="f-error" hidden></p>
+    <div class="form-actions">
+      <button id="f-save" type="submit">Save</button>
+      <button id="f-cancel" type="button">Cancel</button>
+    </div>
+  </form>
+
+  <ul id="rule-list"></ul>
+  <p class="empty" id="rule-empty">No rules yet.</p>
+
   <button id="disconnect" type="button">Disconnect</button>
   <script type="module" src="status.js"></script>
 </body>

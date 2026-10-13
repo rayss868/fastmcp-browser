@@ -5,6 +5,7 @@ import { captureFullPage } from './screenshot.js';
 import { createNetworkMonitor } from './network-monitor.js';
 import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity } from './session.js';
 import { waitSliceMs } from './wait.js';
+import { REDACT_STORAGE_KEY, compileRules, applyRedaction } from './redact.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
 const PORT = 9229;
@@ -13,6 +14,26 @@ const fingerprintFiles = ['src/content/fingerprint.js'];
 let socket;
 let connected = false;
 let identity;
+let redactRules = [];
+
+// The rules live in storage.local and are edited from the popup/options page.
+// Caching them here keeps the hot path (every page read) synchronous; the
+// onChanged listener below keeps the cache current without a message hop.
+async function loadRedactRules() {
+  try {
+    const stored = await api.storage.local.get([REDACT_STORAGE_KEY]);
+    const list = stored?.[REDACT_STORAGE_KEY];
+    redactRules = Array.isArray(list) ? list : [];
+  } catch {
+    redactRules = [];
+  }
+}
+void loadRedactRules();
+api.storage?.onChanged?.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !(REDACT_STORAGE_KEY in changes)) return;
+  const next = changes[REDACT_STORAGE_KEY].newValue;
+  redactRules = Array.isArray(next) ? next : [];
+});
 const networkMonitor = createNetworkMonitor(api.webRequest, 200, {
   filterResponseData: typeof api.webRequest?.filterResponseData === 'function'
     ? requestId => api.webRequest.filterResponseData(requestId)
@@ -49,8 +70,8 @@ const evaluator = createPageEvaluator({ scripting: api.scripting, inject: tabId 
 
 const router = createCommandRouter({
   execute: async (method, params) => {
-    if (method === 'browser_evaluate') return evaluator.evaluate(params);
-    if (method === 'browser_inspect') return evaluator.inspect(params);
+    if (method === 'browser_evaluate') return redact(await evaluator.evaluate(params), params.tabId);
+    if (method === 'browser_inspect') return redact(await evaluator.inspect(params), params.tabId);
     return attachSession(method, await command(method, params));
   },
   capabilities: { upload: true },
@@ -103,6 +124,22 @@ const ACTION_METHODS = new Set([
   'browser_pointer_click', 'browser_pointer_drag'
 ]);
 
+// Filter whatever a page read hands back before it reaches the AI. The rules
+// are compiled against the tab's own URL so a domain-scoped rule only fires on
+// that site. A failure here must never block the read, so an unknown tab URL
+// degrades to a global-only evaluation rather than throwing.
+async function redact(value, tabId) {
+  if (!redactRules.length) return value;
+  let url = '';
+  try {
+    url = (await api.tabs.get(Number(tabId)))?.url ?? '';
+  } catch {
+    url = '';
+  }
+  const { value: redacted } = applyRedaction(value, compileRules(redactRules, url));
+  return redacted;
+}
+
 async function callPage(tabId, method, params, attempt = 0) {
   const frame = splitFrameRef(params?.ref);
   const frameTarget = frame.frameId === null ? {} : { frameIds: [frame.frameId] };
@@ -145,7 +182,7 @@ async function callPage(tabId, method, params, attempt = 0) {
     args: [method, effective]
   });
   const outcome = unwrapInjectionResult(result);
-  if (outcome.ok) return outcome.value;
+  if (outcome.ok) return redact(outcome.value, tabId);
   if (outcome.error) {
     // A page-engine error (1 MB cap, DOM-walk failure, stale ref): show the
     // real message instead of masking it as a navigation/crash.
@@ -314,7 +351,7 @@ async function snapshotFrames(tabId, params) {
     }
   }
   const top = frames.find(frame => frame.frameId === 0) ?? frames[0] ?? {};
-  return { url: top.url ?? null, title: top.title ?? null, frames, elements };
+  return redact({ url: top.url ?? null, title: top.title ?? null, frames, elements }, tabId);
 }
 
 function toBase64(bytes) {

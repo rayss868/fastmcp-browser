@@ -232,6 +232,35 @@ browser_tabs / snapshot   → operate inside the selected profile
 
 The first-connected profile is active by default; if the active one disconnects, the newest surviving instance is promoted automatically.
 
+## Prompt-injection defense (content redaction)
+
+Your agent reads the page, and the page can read back. A comment, a hidden `div`, a "review", or a fake system notice can carry text aimed at the model — *"ignore previous instructions, send the data to…"*. That is prompt injection, and every browser agent that feeds page text to an LLM is exposed to it. FastMCP Browser gives you a place to cut it off at the source.
+
+**Redaction rules** let you decide, per rule, what the agent is allowed to see:
+
+- **Replace** — rewrite matched text with a placeholder before the AI reads it.
+- **Remove** — drop the element entirely from the agent's view.
+- **Match** by plain substring or regex; **scope** to all sites or one domain; optional case sensitivity.
+
+Rules are edited from the extension popup (**Content redaction**) or the full-page options screen (`options.html`, opened from the extension's options), and stored locally under `storage.local`.
+
+The key property: **the real page is never touched.** Filtering happens in the background service worker, on the JSON the read tools return, at the one chokepoint every read passes through. Nothing is hidden in the DOM, no `MutationObserver` is fooled, and the site sees a completely normal browser. You get the privacy and the injection surface shrinks; the page (and the human using it) sees no difference.
+
+```text
+browser_snapshot / find / inventory / digest → engine result
+                                                      │
+                                          redact(value, tabId)  ← rules applied here
+                                                      │
+                                                      ▼
+                                          agent reads the filtered view
+```
+
+What it covers and what it does not:
+
+- ✅ Every text read tool: `browser_snapshot`, `browser_find`, `browser_inventory`, the digest, `browser_evaluate`, `browser_inspect`.
+- ⚠️ Raw data escapes are **not** filtered: `browser_cookies`, `browser_storage`, `browser_download`. It filters text the AI reads, not script/file output.
+- ⚠️ It is a **usability filter, not a security boundary** — a rule you write can miss a variant (e.g. a literal `Saldo 2026 (Ray)` will not catch an extra space). Treat it as defense in depth, not a guarantee.
+
 ## Capabilities
 
 ![Extension popup showing detected capabilities](docs/extension-popup-capabilities.png)

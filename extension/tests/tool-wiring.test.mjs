@@ -20,6 +20,22 @@ test('browser_find is wired from the command router through to the page engine',
   assert.ok(engine.includes('catalogEntries: discovery.catalogEntries'), 'engine must expose catalogEntries');
 });
 
+// browser_evaluate / browser_inspect are answered by the evaluator directly in
+// the router, so they never pass through command()'s callPage — the redaction
+// hook there does not cover them. A leak here silently defeats the whole
+// redaction feature (a raw innerText dump shows everything).
+test('evaluate and inspect results pass through redaction', async () => {
+  const background = await read('../src/background.js');
+  assert.ok(
+    background.includes('redact(await evaluator.evaluate(params)'),
+    'browser_evaluate must redact its result'
+  );
+  assert.ok(
+    background.includes('redact(await evaluator.inspect(params)'),
+    'browser_inspect must redact its result'
+  );
+});
+
 test('the action path uses the shared diff and refresh policy', async () => {
   const engine = await read('../src/content/engine.js');
   const diff = await read('../src/content/diff.js');
