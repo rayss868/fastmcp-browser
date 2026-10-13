@@ -510,6 +510,17 @@ async function fillForm(input = {}) {
 
 function wait(milliseconds) { return new Promise(resolve => setTimeout(() => resolve({ waited: milliseconds, revision: state.revision }), milliseconds)); }
 
+// The current AI-readable digest signature, used as the change baseline for
+// state:"digest-changes". Null when the digest cannot be built, so a transient
+// build failure is never mistaken for a change.
+function digestSignatureNow() {
+  try {
+    return digestSignature(buildDigest({ limit: state.lastDigestLimit ?? 60 }));
+  } catch {
+    return null;
+  }
+}
+
 function waitFor(input = {}) {
   const timeoutMs = Math.max(0, Math.min(Number(input.timeoutMs ?? 5000), 120000));
   const condition = String(input.state ?? (input.selector ? 'visible' : input.text ? 'text' : 'dom_stable'));
@@ -519,6 +530,13 @@ function waitFor(input = {}) {
     const started = Date.now();
     let settled = false;
     let lastMutation = Date.now();
+    // digest-changes waits on the AI-readable view, not on raw DOM churn: the
+    // caller passes the baseline from the previous slice so a change between
+    // slices is not missed, and we hand the observed signature back so the next
+    // slice keeps the same baseline.
+    const digestBaseline = condition === 'digest-changes'
+      ? (typeof input.baseline === 'string' ? input.baseline : digestSignatureNow())
+      : null;
     const observer = typeof MutationObserver === 'function'
       ? new MutationObserver(() => { lastMutation = Date.now(); })
       : null;
@@ -527,7 +545,9 @@ function waitFor(input = {}) {
       if (settled) return;
       settled = true;
       observer?.disconnect();
-      resolve({ satisfied, state: condition, elapsedMs: Date.now() - started, revision: state.revision });
+      const result = { satisfied, state: condition, elapsedMs: Date.now() - started, revision: state.revision };
+      if (condition === 'digest-changes') result.signature = digestBaseline;
+      resolve(result);
     };
     const check = () => {
       if (settled) return;
@@ -544,6 +564,9 @@ function waitFor(input = {}) {
         const last = entries[entries.length - 1];
         const idleFor = performance.now() - (last ? last.responseEnd : 0);
         if (idleFor >= stableMs) return finishWait(true);
+      } else if (condition === 'digest-changes') {
+        const current = digestSignatureNow();
+        if (current !== null && digestBaseline !== null && current !== digestBaseline) return finishWait(true);
       }
       setTimeout(check, 50);
     };

@@ -94,3 +94,18 @@ test('browser_act can hand back a digest instead of a full snapshot', async () =
   assert.ok(engine.includes('result.digest = digestState'), 'act must attach the digest to its result');
   assert.ok(diff.includes("mode === 'digest'"), 'the refresh policy must accept the digest mode');
 });
+
+test('wait_for can wait on the digest changing, carrying its baseline across slices', async () => {
+  const engine = await read('../src/content/engine.js');
+  const background = await read('../src/background.js');
+  // The engine compares the live digest signature against the baseline and
+  // returns it so the next slice keeps the same reference point.
+  assert.ok(engine.includes("condition === 'digest-changes'"), 'waitFor must handle the digest-changes condition');
+  assert.ok(engine.includes('function digestSignatureNow()'), 'the baseline must come from a shared signature helper');
+  assert.ok(engine.includes('result.signature = digestBaseline'), 'waitFor must return the baseline for the next slice');
+  // A wait is cut into slices; without carrying the baseline forward a change
+  // that lands between slices would be missed.
+  assert.ok(background.includes("params.state === 'digest-changes'"), 'background must recognize the digest-changes wait');
+  assert.ok(background.includes('baseline = outcome.signature'), 'background must carry the baseline to the next slice');
+  assert.ok(background.includes('slice.baseline = baseline'), 'background must pass the baseline into each slice');
+});

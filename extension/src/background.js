@@ -204,6 +204,11 @@ async function callPage(tabId, method, params, attempt = 0) {
 async function waitForPage(tabId, params) {
   const total = Math.max(0, Math.min(Number(params.timeoutMs ?? 30000), 120000));
   const started = Date.now();
+  // Each slice is a fresh content-script execution with no memory of the last,
+  // so digest-changes must carry its baseline forward or a change between
+  // slices is missed. The first slice establishes it inside the page.
+  const isDigest = params.state === 'digest-changes';
+  let baseline = typeof params.baseline === 'string' ? params.baseline : null;
   while (true) {
     const remaining = total - (Date.now() - started);
     if (remaining <= 0) {
@@ -214,8 +219,11 @@ async function waitForPage(tabId, params) {
     }
     try {
       // Short slices keep the wait alive across navigations that destroy the content script.
-      const outcome = await callPage(tabId, 'browser_wait_for', { ...params, timeoutMs: waitSliceMs(params.stableMs, remaining) }, 1);
+      const slice = { ...params, timeoutMs: waitSliceMs(params.stableMs, remaining) };
+      if (isDigest && baseline !== null) slice.baseline = baseline;
+      const outcome = await callPage(tabId, 'browser_wait_for', slice, 1);
       if (outcome?.satisfied) return outcome;
+      if (isDigest && typeof outcome?.signature === 'string') baseline = outcome.signature;
     } catch (error) {
       if (error?.code !== 'TAB_NOT_ACCESSIBLE') throw error;
     }

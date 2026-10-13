@@ -98,7 +98,7 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
     tabId,
     selector,
     text: z.string().optional().describe('Page text to wait for (state defaults to "text").'),
-    state: z.enum(['visible', 'attached', 'text', 'dom_stable', 'network_idle']).optional().describe('Condition to wait for.'),
+    state: z.enum(['visible', 'attached', 'text', 'dom_stable', 'network_idle', 'digest-changes']).optional().describe('Condition to wait for. "digest-changes" resolves when the AI-readable control digest changes.'),
     timeoutMs: z.number().int().min(0).max(120000).optional().describe('Maximum time to wait in milliseconds (default 30000).'),
     stableMs: z.number().int().min(50).max(5000).optional().describe('Quiet window for dom_stable/network_idle in milliseconds.')
   }),

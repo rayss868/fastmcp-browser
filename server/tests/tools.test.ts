@@ -101,10 +101,11 @@ test('documented tools expose described input schema properties', () => {
   }
 
   const waitFor = byName.get('browser_wait_for')!;
-  const waitForProps = waitFor.inputSchema.properties as Record<string, { description?: string }>;
+  const waitForProps = waitFor.inputSchema.properties as Record<string, { description?: string; enum?: string[] }>;
   for (const field of ['selector', 'text', 'state', 'timeoutMs', 'stableMs']) {
     assert.ok(waitForProps[field]?.description, `browser_wait_for.${field} missing description`);
   }
+  assert.ok(waitForProps.state?.enum?.includes('digest-changes'), 'browser_wait_for.state must offer the digest-changes condition');
   assert.deepEqual(waitFor.inputSchema.required, []);
 
   const evaluate = byName.get('browser_evaluate')!;
