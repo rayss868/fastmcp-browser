@@ -22,10 +22,16 @@ globalThis.document = {
   querySelector: () => null,
   getElementById: () => null,
   documentElement: {},
-  activeElement: null
+  activeElement: null,
+  // pageText() falls back to document.body when there is no <main>; the fixture
+  // has none, so the body supplies the rendered text a format:"text" read returns.
+  body: { innerText: 'Study material\n\nA long description of the course.' }
 };
+// engine.js reads the bare `location` global in buildDigest/textSnapshot, so the
+// fixture must provide it the same way it provides `document` and `window`.
+globalThis.location = { href: 'https://fixture.test/' };
 globalThis.window = {
-  location: { href: 'https://fixture.test/' },
+  location: globalThis.location,
   getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
   HTMLInputElement: class {},
   HTMLButtonElement: class {},
@@ -80,4 +86,44 @@ test('a compact snapshot still returns a usable revision for later ref reads', (
 
   assert.equal(typeof compact.revision, 'number');
   assert.equal(compact.revision, engine.state.revision);
+});
+
+test('format:text returns the page text without an elements array', () => {
+  // A text-heavy page has no controls, so a digest comes back empty and the
+  // agent reaches for a screenshot. format:text is the light read it should use.
+  const result = engine.snapshot({ format: 'text' });
+
+  assert.equal(result.elements, undefined, 'a text read carries no element list');
+  assert.equal(result.text, 'Study material\n\nA long description of the course.');
+  assert.equal(result.charCount, 49);
+  assert.equal(result.truncated, false);
+  // The catalog baseline must be real, or the next action diff reports the whole
+  // page as freshly added.
+  assert.equal(engine.state.lastCatalog.length, nodes.length);
+});
+
+test('format:text honors maxChars and flags truncation', () => {
+  const original = globalThis.document.body.innerText;
+  globalThis.document.body.innerText = 'A'.repeat(500);
+  try {
+    const result = engine.snapshot({ format: 'text', maxChars: 200 });
+
+    assert.equal(result.text.length, 200);
+    assert.equal(result.charCount, 500);
+    assert.equal(result.truncated, true);
+  } finally {
+    globalThis.document.body.innerText = original;
+  }
+});
+
+test('the digest attaches text only when includeText is set, and never warms it', () => {
+  const plain = engine.snapshot({ format: 'digest' });
+  assert.equal(plain.text, undefined, 'a plain digest must not carry page text');
+
+  const withText = engine.snapshot({ format: 'digest', includeText: true });
+  assert.equal(withText.text, 'Study material\n\nA long description of the course.');
+  // The warm digest is what refreshDigest() rebuilds on every mutation; if the
+  // text landed in it, each DOM change would pay for a full innerText read.
+  assert.equal(engine.state.lastDigest.text, undefined, 'the warm digest must stay text-free');
+  assert.equal(typeof engine.state.lastDigestSignature, 'string');
 });

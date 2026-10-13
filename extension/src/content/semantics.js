@@ -101,10 +101,36 @@ export function createDomSemantics(documentRef, windowRef) {
     return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
   }
 
+  // A label is often the only visible part of a control whose input the page
+  // hides (DaisyUI/radio-tab patterns wrap a visually-hidden <input> in a
+  // <label>). The input then fails the visibility check and drops out of every
+  // candidate list, so the label is the element an agent can actually see and
+  // click — it just needs to report the control's role instead of "label".
+  function controlledInput(element) {
+    if (!element || element.tagName.toLowerCase() !== 'label') return null;
+    const forId = element.getAttribute?.('for') || element.htmlFor;
+    if (forId) {
+      const target = documentRef.getElementById(forId);
+      if (target) return target;
+    }
+    return typeof element.querySelector === 'function' ? element.querySelector('input') : null;
+  }
+
   function role(element) {
     const explicit = element.getAttribute('role');
     if (explicit) return explicit;
     const tag = element.tagName.toLowerCase();
+    if (tag === 'label') {
+      const control = controlledInput(element);
+      // Only stand in for the control when the control itself is invisible;
+      // otherwise a normal visible checkbox would appear twice, once as itself
+      // and once as its label.
+      const controlType = control && !visible(control)
+        ? String(control.getAttribute?.('type') || control.type || '').toLowerCase()
+        : '';
+      if (controlType === 'radio') return 'radio';
+      if (controlType === 'checkbox') return 'checkbox';
+    }
     if (tag === 'button') return 'button';
     // SPA routers navigate through `<a>` with no href. Reporting the raw tag
     // gave those anchors role "a", which interactiveOnly then dropped — the
@@ -122,44 +148,47 @@ export function createDomSemantics(documentRef, windowRef) {
     return IMPLICIT_ROLE_BY_TAG[tag] ?? tag;
   }
 
-  function name(element) {
+  // maxLength is opt-in: the default keeps the 160-char guard so a single element
+  // cannot flood a payload, while a caller reading a text-heavy block (main,
+  // article) can raise it for that call without changing the default anywhere else.
+  function name(element, maxLength = MAX_NAME_LENGTH) {
     const labelled = element.getAttribute('aria-label');
-    if (labelled) return sanitizeText(labelled);
+    if (labelled) return sanitizeText(labelled, maxLength);
     const labelledBy = element.getAttribute('aria-labelledby');
     if (labelledBy) {
       const joined = labelledBy.split(/\s+/)
-        .map(id => sanitizeText(documentRef.getElementById(id)?.textContent ?? ''))
+        .map(id => sanitizeText(documentRef.getElementById(id)?.textContent ?? '', maxLength))
         .filter(Boolean)
         .join(' ');
-      if (joined) return sanitizeText(joined);
+      if (joined) return sanitizeText(joined, maxLength);
     }
     if (element instanceof windowRef.HTMLInputElement && element.id) {
       const label = documentRef.querySelector(`label[for="${windowRef.CSS.escape(element.id)}"]`);
-      if (label?.textContent) return sanitizeText(label.textContent);
+      if (label?.textContent) return sanitizeText(label.textContent, maxLength);
     }
     if (typeof element.closest === 'function') {
       const wrapper = element.closest('label');
       if (wrapper && wrapper !== element) {
-        const wrapped = sanitizeText(wrapper.textContent);
+        const wrapped = sanitizeText(wrapper.textContent, maxLength);
         if (wrapped) return wrapped;
       }
     }
     const alt = element.getAttribute('alt');
-    if (alt) return sanitizeText(alt);
+    if (alt) return sanitizeText(alt, maxLength);
     if (element.tagName.toLowerCase() === 'svg' && typeof element.querySelector === 'function') {
       const title = element.querySelector('title');
-      if (title) return sanitizeText(title.textContent);
+      if (title) return sanitizeText(title.textContent, maxLength);
     }
-    const text = sanitizeText(element.textContent);
+    const text = sanitizeText(element.textContent, maxLength);
     if (text) return text;
     const placeholder = element.placeholder ?? element.getAttribute('placeholder');
-    if (placeholder) return sanitizeText(placeholder);
+    if (placeholder) return sanitizeText(placeholder, maxLength);
     const title = element.getAttribute('title');
-    if (title) return sanitizeText(title);
+    if (title) return sanitizeText(title, maxLength);
     const description = element.getAttribute('aria-description');
-    if (description) return sanitizeText(description);
+    if (description) return sanitizeText(description, maxLength);
     const testId = element.getAttribute('data-testid');
-    if (testId) return sanitizeText(testId);
+    if (testId) return sanitizeText(testId, maxLength);
     return '';
   }
 

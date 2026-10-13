@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { createPageEvaluator } from '../src/evaluate.js';
 
 function fakeScripting(responses) {
@@ -133,4 +134,18 @@ test('inspect requires a ref or a selector', async () => {
 
   await assert.rejects(evaluator.inspect({ tabId: 9 }), error => error.code === 'INVALID_ARGUMENT');
   assert.equal(scripting.calls.length, 0);
+});
+
+test('inspect attaches the requested path value instead of the React props dump', async () => {
+  // The page-side func always set summary.props when a React props key was
+  // present, so path="innerText" returned hundreds of tokens of props before the
+  // one value the caller asked for. Assert the source makes props conditional on
+  // the absence of a path, and reads the path value into summary.value.
+  const source = await readFile(new URL('../src/evaluate.js', import.meta.url), 'utf8');
+  assert.ok(source.includes('if (pathArg) {'), 'a path request must branch before the props dump');
+  assert.ok(source.includes('summary.value = value'), 'the requested path must land in summary.value');
+  const propsIndex = source.indexOf('summary.props = element[propsKey]');
+  const pathIndex = source.indexOf('if (pathArg) {');
+  assert.ok(pathIndex !== -1 && propsIndex !== -1 && pathIndex < propsIndex, 'the path branch must come before the props assignment');
+  assert.ok(source.includes('} else if (propsKey) {'), 'props must be an else-branch, not unconditional');
 });

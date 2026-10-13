@@ -10,7 +10,7 @@
 
 - **33 MCP tools**, full schema footprint ≈ **10k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 54/54, extension 90/90, build green for Chromium + Firefox
+- **Tests**: server 96/96, extension 202/202, build green for Chromium + Firefox
 
 ## Teaser
 
@@ -333,8 +333,8 @@ The extension popup displays detected capabilities per browser profile:
 ## Testing
 
 ```bash
-cd server   && npm test    # build + 55 unit/workflow/security tests
-cd extension && node --test tests/*.test.mjs   # 153 session/router/bridge/network/screenshot/build tests
+cd server   && npm test    # build + 96 unit/workflow/security tests
+cd extension && node --test tests/*.test.mjs   # 202 session/router/bridge/network/screenshot/build tests
 ```
 
 Both suites must be green; extension build also runs bundled-syntax and no-CDP integration checks.
@@ -359,6 +359,7 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 
 ```text
 ├── README.md
+├── CHANGELOG.md                        # version history (Keep a Changelog)
 ├── docs/
 │   ├── banner.png                      # README hero
 │   ├── teaser.gif                      # README teaser (10s loop, embeds inline)
@@ -366,12 +367,12 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 │   └── promo-poster.jpg                # poster frame
 ├── server/
 │   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (33 registry)
-│   ├── tests/      # 55 tests
+│   ├── tests/      # 96 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 153 tests
+    ├── tests/      # 202 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
@@ -381,6 +382,10 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 - `browser_network` observes live requests per tab using the WebExtensions `webRequest` API, including request/response headers and available upload-body data. Firefox also captures up to 64 KB of text response body per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted; upload data is limited to 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified. The buffer clears when a tab closes or the extension background process restarts.
 - **No headless / browser launching** — it automates browsers that are already running.
 - Screenshot output is PNG (raster). By default it captures the visible viewport; set `fullPage: true` on `browser_screenshot` to scroll and stitch the entire page into one PNG. This does not produce vector output.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. Downloadable extension archives are attached to each [GitHub Release](https://github.com/rayss868/fastmcp-browser/releases).
 
 ## License
 

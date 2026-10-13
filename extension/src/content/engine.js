@@ -151,6 +151,51 @@ function dialogRoot() {
   return null;
 }
 
+// Reading a page's text is what an agent does most, and it is the one thing the
+// interactive-control digest cannot give: a text-heavy page has no controls, so
+// the digest comes back empty and the model falls back to a screenshot. These
+// helpers bound and return the rendered text so the model reads it directly.
+const MAX_PAGE_TEXT_CHARS = 20000;
+const MAX_PAGE_TEXT_LINES = 2000;
+
+function pageText(options = {}) {
+  const root = document.querySelector('main') ?? document.body;
+  if (!root) return '';
+  // innerText is the rendered text — it drops display:none content and hidden
+  // nav that textContent would include, so it matches what the page shows.
+  const raw = typeof root.innerText === 'string' ? root.innerText : (root.textContent ?? '');
+  const collapsed = String(raw).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  // `|| default` would drop a small maxChars (20 is falsy-safe but any value the
+  // caller set must win); only fall back when the option is absent or not a number.
+  const requested = Number(options.maxChars);
+  const maxChars = Math.max(200, Math.min(Number.isFinite(requested) ? requested : MAX_PAGE_TEXT_CHARS, 100000));
+  const lines = collapsed.split('\n');
+  const truncatedByLines = lines.length > MAX_PAGE_TEXT_LINES;
+  let text = truncatedByLines ? lines.slice(0, MAX_PAGE_TEXT_LINES).join('\n') : collapsed;
+  const truncatedByChars = text.length > maxChars;
+  if (truncatedByChars) text = text.slice(0, maxChars);
+  return {
+    text,
+    truncated: truncatedByLines || truncatedByChars,
+    charCount: collapsed.length
+  };
+}
+
+// The text read the agent should reach for instead of a screenshot: a small
+// payload with the rendered text of the main region. On-demand, so it costs
+// nothing until it is asked for — unlike the warm digest, which must stay cheap.
+function textSnapshot(options = {}) {
+  const result = pageText(options);
+  return {
+    url: location.href,
+    title: document.title,
+    revision: refs.revision,
+    text: result.text,
+    charCount: result.charCount,
+    truncated: result.truncated
+  };
+}
+
 function digestDialog(dialog) {
   if (!dialog) return null;
   const heading = dialog.querySelector?.('h1,h2,h3,h4,[role="heading"]');
@@ -238,22 +283,25 @@ function digest(input = {}) {
   state.digestCalledAt = Date.now();
   const limit = digestLimit(input);
   const ranked = Boolean(input.goal || input.keywords);
+  // Text is attached only when the caller asks for it. The warm refresh below
+  // runs on every DOM mutation burst, so a page-text read must never be part of
+  // it — a 20k-char innerText on each mutation is exactly the kind of background
+  // cost that made the session feel slow. A text request on a warm digest reuses
+  // the warm control list and only adds the text; the text is never stored in the
+  // warm digest, so neither the refresh nor the signature pays for it.
+  const wantText = input.includeText === true;
   const warm = state.lastDigest;
-  // The observer keeps a digest warm after each DOM settle; reuse it while it
-  // still matches the live revision and the same limit, so a repeated call is a
-  // lookup rather than another DOM walk. A ranked request is never reused — its
-  // ordering depends on the caller's goal.
-  if (
-    warm && !ranked && warm.revision === refs.revision && state.lastDigestLimit === limit
-    && Date.now() - state.digestAt < 3000 && state.digestInvalidated !== true
-  ) return warm;
+  const reusable = warm && !ranked && warm.revision === refs.revision
+    && state.lastDigestLimit === limit && Date.now() - state.digestAt < 3000
+    && state.digestInvalidated !== true;
+  if (reusable) return wantText ? { ...warm, ...pageText(input) } : warm;
   const result = buildDigest({ limit, goal: input.goal, keywords: input.keywords, relevantOnly: input.relevantOnly });
   state.lastDigest = result;
   state.lastDigestLimit = limit;
   state.lastDigestSignature = digestSignature(result);
   state.digestInvalidated = false;
   state.digestAt = Date.now();
-  return result;
+  return wantText ? { ...result, ...pageText(input) } : result;
 }
 
 // Recomputed after a mutation burst, but only once a caller has actually asked
@@ -293,6 +341,14 @@ function finish(payload) {
 }
 
 function snapshot(input = {}) {
+  // `format: 'text'` is the light way to read a page's words — the digest only
+  // carries interactive controls, so a text-heavy page returns nothing there and
+  // an agent reaches for a screenshot instead. A text read keeps a catalog
+  // baseline so the next action diff is not the whole page.
+  if (input.format === 'text') {
+    state.lastCatalog = discovery.catalogEntries({ limit: 400 });
+    return textSnapshot(input);
+  }
   // `format: 'digest'` returns the warm AI-readable digest (interactive controls
   // with refs plus value/checked/disabled state) instead of the element list.
   if (input.format === 'digest') return digest(input);
@@ -439,7 +495,21 @@ async function applySelect(element, value) {
   return sanitizeText(match.textContent ?? value);
 }
 
-async function actionClick(input = {}) { const element = targetOf(input); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await actionability.ensureActionable(element, 'click'); await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } return finish({ changed: true, url: location.href }); }
+// A label whose control the page hides is the visible click target, but a
+// synthetic click on the label does not forward to the hidden input the way a
+// real pointer click does — the tab simply never toggles. Resolve the label to
+// its input so the click lands on the control itself.
+function clickTarget(element) {
+  if (element && typeof element.tagName === 'string' && element.tagName.toLowerCase() === 'label') {
+    const forId = element.getAttribute?.('for') || element.htmlFor;
+    const control = (forId && document.getElementById(forId))
+      || (typeof element.querySelector === 'function' ? element.querySelector('input') : null);
+    if (control) return control;
+  }
+  return element;
+}
+
+async function actionClick(input = {}) { const element = clickTarget(targetOf(input)); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await actionability.ensureActionable(element, 'click'); await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } return finish({ changed: true, url: location.href }); }
 async function fill(input = {}, value, stealth = false) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (stealth) { await actionability.ensureActionable(element, 'fill'); await setValueStealth(element, value, stealthConfig(stealth)); } else { setValue(element, value); } return finish({ changed: true }); }
 async function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); await delay(30 + Math.random() * 70); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } else { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } return finish({ changed: true }); }
 async function select(input = {}, value) { const element = targetOf(input); return finish({ changed: true, value: await applySelect(element, String(value)) }); }
@@ -605,12 +675,13 @@ async function act(input = {}) {
 
   let detail = null;
   if (action === 'click') {
-    if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
+    const clickable = clickTarget(element);
+    if (!(clickable instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' });
     if (input.stealth) {
-      await actionability.ensureActionable(element, 'click');
+      await actionability.ensureActionable(clickable, 'click');
       await pointerController.click({ ref: target.ref, selector: target.selector, revision: target.revision, stealth: true });
     } else {
-      element.click();
+      clickable.click();
     }
   } else if (action === 'fill' || action === 'type') {
     const value = input.value == null ? '' : String(input.value);

@@ -151,16 +151,21 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
                 }
                 summary.components = [...new Set(components)].slice(0, 10);
               }
-              if (propsKey) summary.props = element[propsKey];
-              if (keys.some(key => key.startsWith('__vueParentComponent'))) summary.framework = 'vue';
-              if (keys.some(key => key.startsWith('__ngContext__'))) summary.framework = 'angular';
+              // A caller that asks for one path wants that value, not the whole
+              // React props object — dumping props alongside it flooded the
+              // context (hundreds of tokens) before the requested field even
+              // appeared. Include props only when no path was requested.
               if (pathArg) {
                 let value = element;
                 for (const segment of String(pathArg).split('.').filter(Boolean)) {
                   value = value == null ? undefined : value[segment];
                 }
                 summary.value = value;
+              } else if (propsKey) {
+                summary.props = element[propsKey];
               }
+              if (keys.some(key => key.startsWith('__vueParentComponent'))) summary.framework = 'vue';
+              if (keys.some(key => key.startsWith('__ngContext__'))) summary.framework = 'angular';
               return summary;
             } finally {
               if (element) element.removeAttribute(attr);

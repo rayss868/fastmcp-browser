@@ -68,6 +68,15 @@ test('the digest is a snapshot format served by the page engine, not a routed to
   assert.ok(engine.includes('digest, screenshotTarget'), 'the digest must stay on the page surface');
 });
 
+test('a text read is a snapshot format, and its cost stays off the warm digest', async () => {
+  const engine = await read('../src/content/engine.js');
+  assert.ok(engine.includes("input.format === 'text'"), 'snapshot must route format text to the text read');
+  assert.ok(engine.includes('function pageText('), 'the text read must come from a shared helper');
+  // The warm refresh runs on every mutation; text must not be built there.
+  assert.ok(engine.includes('const wantText = input.includeText === true'), 'text must be opt-in');
+  assert.ok(!/refreshDigest[\s\S]{0,400}pageText\(/.test(engine), 'the warm refresh must never read page text');
+});
+
 test('the digest scopes to the open dialog, keeps duplicate indices, and carries control state', async () => {
   const engine = await read('../src/content/engine.js');
   assert.ok(engine.includes("scope: dialog ? 'dialog' : undefined"), 'the digest must scope to the open dialog');

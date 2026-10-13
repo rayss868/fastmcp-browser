@@ -109,12 +109,17 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     // every ref the caller already holds; a plain browser_snapshot still resets.
     if (!options.keepRefs) refs.reset();
     const limit = Number(options.limit) || 0;
+    // A text-heavy page puts its whole body inside one block element (main,
+    // article), so the default 160-char name cap truncated it in every format.
+    // maxNameChars raises that cap for this call; the default stays 160 so no
+    // other snapshot grows.
+    const nameLimit = Number(options.maxNameChars) > 0 ? Number(options.maxNameChars) : undefined;
     const elements = [];
     const seenCounts = new Map();
     for (const element of orderedCandidates(options)) {
       const tag = element.tagName.toLowerCase();
       const role = semantics.role(element);
-      const name = semantics.name(element);
+      const name = semantics.name(element, nameLimit);
       // Position among earlier candidates with the same role+name lets a stale
       // ref recover to the right duplicate (e.g. which Likert radio "4") instead
       // of always landing on the first match.

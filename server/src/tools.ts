@@ -66,7 +66,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_open: 'Open a URL in the live Automation tab by default. Set newTab:true to open a separate background tab; all automation tabs join the session group.',
   browser_close: 'Close the given tab and revoke its session authorization so it cannot be targeted again.',
   browser_focus: 'Activate the given tab so subsequent page actions target it visibly.',
-  browser_snapshot: 'Return the page for locating targets. format:"digest" is the preferred default when you only need to act: it returns the interactive controls with refs plus their value/checked/disabled state, the page title/URL, and whether a dialog is open — and the extension keeps it warm as the DOM settles, so it is current without re-reading the page. A plain (or format:"compact") snapshot returns the full accessibility-style element list (ref, role, name, value) when you need headings, non-interactive text, or exact order. Narrow either: scope:"dialog" for only the open modal, scope:"form" for form controls, scope:"viewport" for on-screen elements, or selector:"main form" for a CSS subtree; interactiveOnly:true and maxDepth trim further. format:"compact" gives one line per element; frames:true merges readable iframes (subframe refs are prefixed <frameId>:eN); mode:"visual" returns a screenshot with numbered boxes for canvas/WebGL pages that expose no DOM. Pass goal (a short phrase describing the objective) or keywords to rank candidates by relevance, so limit truncates from the most relevant end instead of DOM order, and relevantOnly:true to drop everything that does not match — the fix for long pages where a DOM-ordered cut hides the target. When you only need one element, browser_find is cheaper than a full snapshot.',
+  browser_snapshot: 'Return the page for locating targets or reading its words. format:"digest" is the preferred default when you only need to act: it returns the interactive controls with refs plus their value/checked/disabled state, the page title/URL, and whether a dialog is open — and the extension keeps it warm as the DOM settles, so it is current without re-reading the page. To read the page text, use format:"text": it returns the rendered text of the main region (innerText) without a screenshot, which is the right way to read a text-heavy page — the digest only carries interactive controls, so a text page comes back empty there. A plain (or format:"compact") snapshot returns the full accessibility-style element list (ref, role, name, value) when you need headings, non-interactive text, or exact order; each name is capped at 160 characters, so pass maxNameChars to read a text block (main, article) in place when its whole text sits in one element. Narrow either: scope:"dialog" for only the open modal, scope:"form" for form controls, scope:"viewport" for on-screen elements, or selector:"main form" for a CSS subtree; interactiveOnly:true and maxDepth trim further. format:"compact" gives one line per element; frames:true merges readable iframes (subframe refs are prefixed <frameId>:eN); mode:"visual" returns a screenshot with numbered boxes for canvas/WebGL pages that expose no DOM. Pass goal (a short phrase describing the objective) or keywords to rank candidates by relevance, so limit truncates from the most relevant end instead of DOM order, and relevantOnly:true to drop everything that does not match — the fix for long pages where a DOM-ordered cut hides the target. When you only need one element, browser_find is cheaper than a full snapshot.',
   browser_inventory: 'Summarize the current tab structure into buttons, links, forms, and headings with an optional interactive-only filter. Use this for a grouped overview or when you want relevance ranking across categories; when you just need the actionable controls to act on, browser_snapshot with format:"digest" is lighter. Pass filter:"interactive" (or "viewport") to keep the response small; filter:"all" also includes every text candidate and can be very large. goal/keywords rank the groups by relevance the same way browser_snapshot does.',
   browser_click: 'Click an element by ref from the latest snapshot (pass revision to reject stale refs) or by selector when the DOM rerenders often. Stale refs are re-resolved automatically against the live DOM when the element can be matched again; the response flags recovered:true and includes a compact diff of added/removed/changed elements so a follow-up snapshot is often unnecessary. Use it for buttons, links, checkboxes, radios, and custom comboboxes. Do NOT click an input just to put the caret in it before typing: browser_fill and browser_fill_form set the value directly, so a click-then-type pair only adds a slow extra round-trip in which a stray user click can move the caret and send the text to the wrong field.',
   browser_pointer_move: 'Move the pointer to page coordinates in the active tab for hover-driven UI.',
@@ -83,13 +83,13 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle. Prefer browser_wait_for when you can name the condition you are waiting on.',
   browser_wait_for: 'Wait on a tab until a page condition is met instead of sleeping a fixed time: state:"visible" (default with selector) or "attached" for a selector, "text" for page text, "dom_stable" (no DOM mutations for stableMs, default 300), "network_idle" (no recent resource activity), or "digest-changes" (the AI-readable control digest changed, i.e. the page state the agent reads actually moved, unlike raw DOM churn). Survives navigations up to timeoutMs (default 30000, max 120000) and returns satisfied plus the current snapshot revision.',
-  browser_screenshot: 'Capture a PNG dataUrl of the visible viewport by default. Set fullPage:true to scroll the page and stitch viewport captures into one full-page PNG; the active tab and original scroll position are restored afterward.',
+  browser_screenshot: 'Capture a PNG dataUrl of the visible viewport by default. Use this only when the content is not in the DOM: canvas, WebGL, an image, or a PDF viewer. For ordinary text pages read them with browser_snapshot format:"text" (or format:"compact") instead — a screenshot costs far more tokens and returns no selectable text or refs. Set fullPage:true to scroll the page and stitch viewport captures into one full-page PNG; the active tab and original scroll position are restored afterward.',
   browser_upload: 'Read local files from disk (paths) and attach them to a file input identified by ref (with optional revision) or by selector, or to the page\'s single file input when neither is given; files are read on the MCP host and set via DataTransfer, no OS dialog.',
   browser_network: 'Observe live requests for the given tab, including request and response headers plus available upload-body data. Firefox also captures up to 64 KB of text response bodies per request; Chromium does not capture response bodies. Authorization, Cookie, Proxy-Authorization, and Set-Cookie headers are omitted. Upload data is capped at 8 KB per request and the in-memory buffer holds at most 200 requests per tab. Requests cannot be blocked or modified. Each record is heavy, so pass a small limit (5-10) and only raise it when you really need more records; the default is 50.',
   browser_download: 'Trigger a file download in the given tab and return the downloadId and url.',
   browser_cookies: 'Get, set, or remove cookies for the URL of the given tab.',
   browser_storage: 'Read, write, or delete storage keys in the extension storage area for session state.',
-  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected. Return only the small set of values you need (pick fields, count, boolean) — avoid dumping large DOM subtrees or whole documents; results can reach 1 MB and will slow the session.',
+  browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. This is a last-resort escape hatch, not a way to read a page. It needs fallback, one sentence naming what the extension tools could not give you, and it is refused with FALLBACK_REQUIRED without it; it is also refused with ORIENT_FIRST until you have read the tab with browser_snapshot format:"digest" (or browser_inventory/browser_find), because the extension returns the interactive controls with refs faster than a hand-rolled DOM dump. Most reads never need browser_evaluate: use browser_snapshot, browser_find, browser_inventory, or browser_inspect. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected. On pages whose CSP blocks eval it fails with UNSUPPORTED_CAPABILITY; use browser_inspect with a selector instead. Return only the small set of values you need (pick fields, count, boolean) — avoid dumping large DOM subtrees or whole documents; results can reach 1 MB and will slow the session.',
   browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, which profile currently has OS window focus, and which instance the bridge currently routes session commands to. Use `focused` to see which profile the user is looking at; focus is informational only and does not change routing, so select an instance explicitly when multiple profiles are connected.',
   browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
   browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.'
@@ -130,7 +130,10 @@ const schemas: Record<string, JsonSchema> = {
     maxDepth: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum ancestor depth from the document root.' },
     limit: { type: 'integer', minimum: 1, maximum: 1000, description: 'Maximum number of elements to return.' },
     boundingBox: { type: 'boolean', description: 'Include each element bounding box (set automatically in visual mode).' },
-    format: { type: 'string', enum: ['compact', 'digest'], description: 'compact: one line per element instead of a JSON array. digest: only the interactive controls with refs and their value/checked/disabled state, kept warm as the DOM settles — the light way to orient before acting.' },
+    format: { type: 'string', enum: ['compact', 'digest', 'text'], description: 'compact: one line per element instead of a JSON array. digest: only the interactive controls with refs and their value/checked/disabled state, kept warm as the DOM settles — the light way to orient before acting. text: the rendered text of the page main region (innerText), the light way to read a page\'s words without a screenshot.' },
+    includeText: { type: 'boolean', description: 'With format:"digest", also attach the page text (same as format:"text") in one call. Off by default so the warm digest stays cheap.' },
+    maxChars: { type: 'integer', minimum: 200, maximum: 100000, description: 'Cap on characters returned by format:"text" or includeText (default 20000).' },
+    maxNameChars: { type: 'integer', minimum: 40, maximum: 100000, description: 'Raise the per-element name cap for this call (default 160). A text-heavy page keeps its whole body in one block element (main, article), so the default truncates it in compact and full formats; set this higher to read that block in place instead of format:"text".' },
     frames: { type: 'boolean', description: 'Merge snapshots from every readable frame; subframe refs are prefixed <frameId>:eN so actions route back to that frame.' },
     mode: { type: 'string', enum: ['visual'], description: 'Return a viewport screenshot with numbered boxes over each candidate plus a mark→ref coordinate map for canvas/WebGL targets.' },
     goal: GOAL,
@@ -219,10 +222,11 @@ const schemas: Record<string, JsonSchema> = {
   browser_storage: object({ tabId: TAB_ID, area: { type: 'string', enum: ['local', 'session'], description: 'Storage area (defaults to local).' }, action: { type: 'string', enum: ['get', 'set', 'remove'], description: 'Storage operation to perform.' }, key: { type: 'string', description: 'Storage key for set/remove or single-key get.' }, value: { description: 'Value to store for set.' } }, ['action']),
   browser_evaluate: object({
     tabId: TAB_ID,
-    expression: { type: 'string', minLength: 1, maxLength: 10000, description: 'JavaScript expression (1-10000 characters) evaluated in the page MAIN world. With ref, the resolved element is bound as `element`; a function expression is called with it.' },
+    expression: { type: 'string', minLength: 1, maxLength: 10000, description: 'JavaScript expression (1-10000 characters) evaluated in the page MAIN world. Last resort: orient with browser_snapshot format:"digest" first, or this is refused with ORIENT_FIRST. With ref, the resolved element is bound as `element`; a function expression is called with it.' },
+    fallback: { type: 'string', minLength: 1, description: 'Required. One sentence naming what the extension tools (browser_snapshot format:"digest", browser_inventory, browser_find, browser_inspect) could not give you. browser_evaluate is refused with FALLBACK_REQUIRED when this is missing.' },
     ref: REF,
     revision: REVISION
-  }, ['expression']),
+  }, ['expression', 'fallback']),
   browser_instances: object({}),
   browser_use_instance: object({ id: { type: 'string', description: 'Instance id returned by browser_instances.' } }, ['id']),
   browser_disconnect: object({})
@@ -304,12 +308,45 @@ function maybeRecord(name: string, params: Record<string, unknown>): void {
   }
 }
 
+// Reading a page through the extension's own tools (snapshot/inventory/find)
+// orients the agent with the digest instead of a hand-rolled DOM dump. The
+// generic eval escape hatch stays closed until that has happened on the tab, so
+// an agent cannot skip the cheap, AI-readable view and go straight to
+// browser_evaluate. Keyed by tab id, or by the session default when tabId is
+// omitted; opening, closing, or focusing a tab re-keys the default.
+const ORIENTING_TOOLS = new Set(['browser_snapshot', 'browser_inventory', 'browser_find']);
+const orientedTabs = new Set<string | number>();
+const DEFAULT_TAB = 'default';
+
+function orientationKey(params: Record<string, unknown>): string | number {
+  const tabId = params.tabId;
+  return typeof tabId === 'number' && Number.isInteger(tabId) ? tabId : DEFAULT_TAB;
+}
+
+function stripFallback(params: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...params };
+  delete rest.fallback;
+  return rest;
+}
+
 export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
   if (name === 'browser_instances') return bridge.instances();
   if (name === 'browser_use_instance') {
     const result = bridge.useInstance(String(params.id ?? ''));
     maybeRecord(name, params);
+    return result;
+  }
+  if (name === 'browser_evaluate') {
+    const fallback = typeof params.fallback === 'string' ? params.fallback.trim() : '';
+    if (!fallback) {
+      throw Object.assign(new Error('browser_evaluate is a last resort and needs a fallback reason: pass fallback with one sentence naming what the extension tools could not give you (browser_snapshot format:"digest", browser_inventory, browser_find, or browser_inspect). Most page reads never need browser_evaluate.'), { code: 'FALLBACK_REQUIRED', retryable: false });
+    }
+    if (!orientedTabs.has(orientationKey(params))) {
+      throw Object.assign(new Error('Read the page through the extension first: call browser_snapshot with format:"digest" (or browser_inventory/browser_find) on this tab, then retry browser_evaluate. The digest returns the interactive controls with refs, so most reads do not need browser_evaluate at all.'), { code: 'ORIENT_FIRST', retryable: false });
+    }
+    const result = await requestWithRecovery(bridge, name, stripFallback(params));
+    maybeRecord(name, stripFallback(params));
     return result;
   }
   if (name === 'browser_upload') {
@@ -320,5 +357,19 @@ export async function callBrowserTool(bridge: BrowserBridge, name: string, param
   }
   const result = await requestWithRecovery(bridge, name, params);
   maybeRecord(name, params);
+  if (ORIENTING_TOOLS.has(name)) {
+    orientedTabs.add(orientationKey(params));
+  } else if (name === 'browser_open') {
+    const id = (result as { id?: unknown } | null)?.id;
+    if (typeof id === 'number' && Number.isInteger(id)) orientedTabs.delete(id);
+    if (params.newTab !== true) orientedTabs.delete(DEFAULT_TAB);
+  } else if (name === 'browser_close') {
+    orientedTabs.delete(orientationKey(params));
+    orientedTabs.delete(DEFAULT_TAB);
+  } else if (name === 'browser_focus') {
+    const key = orientationKey(params);
+    if (orientedTabs.has(key)) orientedTabs.add(DEFAULT_TAB);
+    else orientedTabs.delete(DEFAULT_TAB);
+  }
   return result;
 }

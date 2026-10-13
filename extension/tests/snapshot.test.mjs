@@ -167,3 +167,49 @@ test('catalog returns compact descriptors without touching refs', () => {
   assert.ok(catalog.length >= 5);
   assert.deepEqual(Object.keys(catalog[0]).sort(), ['name', 'role']);
 });
+
+// A text-heavy page keeps its whole body in one block element, so its name is
+// the entire page text. The default 160-char cap truncated it in every format;
+// maxNameChars raises the cap for that one call.
+function textBlockFixture(text) {
+  const nodes = [
+    { tagName: 'MAIN', role: null, text, visible: true }
+  ];
+  const documentRef = {
+    title: 'Fixture',
+    querySelectorAll: () => nodes.filter(node => node.visible),
+    getElementById: () => null
+  };
+  const windowRef = {
+    location: { href: 'https://fixture.test/' },
+    getComputedStyle: element => ({ display: element.visible ? 'block' : 'none', visibility: 'visible' }),
+    HTMLInputElement: class {},
+    HTMLButtonElement: class {},
+    HTMLFormElement: class {},
+    CSS: { escape: value => value }
+  };
+  for (const node of nodes) {
+    node.getAttribute = () => null;
+    node.getBoundingClientRect = () => ({ x: 1, y: 2, width: 300, height: 400 });
+    node.isConnected = true;
+    node.textContent = node.text;
+  }
+  return { documentRef, windowRef, semantics: createDomSemantics(documentRef, windowRef) };
+}
+
+test('a block element name is capped at 160 chars by default', () => {
+  const { documentRef, windowRef, semantics } = textBlockFixture('x'.repeat(500));
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const result = engine.snapshot({ format: 'compact' });
+
+  assert.ok(result.text.includes('x'.repeat(160)), 'the default cap must still apply');
+  assert.ok(!result.text.includes('x'.repeat(161)), 'the default must not exceed 160 chars');
+});
+
+test('maxNameChars raises the per-element cap so compact can carry long text', () => {
+  const { documentRef, windowRef, semantics } = textBlockFixture('x'.repeat(500));
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const result = engine.snapshot({ format: 'compact', maxNameChars: 500 });
+
+  assert.ok(result.text.includes('x'.repeat(500)), 'the raised cap must return the full block text');
+});

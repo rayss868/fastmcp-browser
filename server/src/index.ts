@@ -22,7 +22,7 @@ function handleControl(name: string, params: Record<string, unknown>): unknown {
 }
 
 const bridge = createBridge(port, undefined, { control: handleControl });
-const server = new McpServer({ name: 'fastmcp-browser', version: '0.4.7' });
+const server = new McpServer({ name: 'fastmcp-browser', version: '0.5.0' });
 
 const tabId = z.number().int().optional().describe('Target browser tab ID.');
 const revision = z.number().int().optional().describe('Snapshot revision used to reject stale refs.');
@@ -124,7 +124,7 @@ const schemas: Record<string, z.ZodObject<any, any, any>> = {
   browser_download: z.object({ tabId, url: z.string().url() }),
   browser_cookies: z.object({ tabId, action: z.enum(['get', 'set', 'remove']), cookie: z.record(z.unknown()).optional() }),
   browser_storage: z.object({ tabId, area: z.enum(['local', 'session']).default('local'), action: z.enum(['get', 'set', 'remove']), key: z.string().optional(), value: z.unknown().optional() }),
-  browser_evaluate: z.object({ tabId, expression: z.string().min(1).max(10000).describe('JavaScript expression (1-10000 characters) evaluated in the page MAIN world. With ref, the resolved element is available as `element`.'), ref, revision }),
+  browser_evaluate: z.object({ tabId, expression: z.string().min(1).max(10000).describe('JavaScript expression (1-10000 characters) evaluated in the page MAIN world. Last resort: orient with browser_snapshot format:"digest" first, or this is refused with ORIENT_FIRST. With ref, the resolved element is available as `element`.'), fallback: z.string().min(1).describe('Required. One sentence naming what the extension tools could not give you; browser_evaluate is refused with FALLBACK_REQUIRED when this is missing.'), ref, revision }),
   browser_instances: z.object({}),
   browser_use_instance: z.object({ id: z.string().describe('Instance id returned by browser_instances.') }),
   browser_disconnect: z.object({})

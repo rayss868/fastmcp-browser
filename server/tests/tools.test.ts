@@ -40,14 +40,100 @@ test('the digest is a snapshot format, not a standalone tool', () => {
   assert.ok(actProps.refresh?.enum?.includes('digest'), 'browser_act.refresh must offer a digest mode');
 });
 
-test('browser_evaluate accepts an optional ref and revision for element-scoped evaluation', () => {
+test('a text read is a snapshot format, and screenshot is steered away from text pages', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const snapshot = byName.get('browser_snapshot')!;
+  const props = snapshot.inputSchema.properties as Record<string, { enum?: string[]; description?: string }>;
+  assert.ok(props.format?.enum?.includes('text'), 'browser_snapshot.format must offer a text mode');
+  assert.match(String(props.format?.description), /text/i);
+  assert.ok(props.includeText?.description, 'browser_snapshot.includeText missing description');
+  assert.ok(props.maxChars?.description, 'browser_snapshot.maxChars missing description');
+  assert.ok(props.maxNameChars?.description, 'browser_snapshot.maxNameChars missing description');
+  assert.match(snapshot.description, /format:"text"/, 'the snapshot description must point at the text read');
+  const screenshot = byName.get('browser_screenshot')!;
+  assert.match(screenshot.description, /canvas|WebGL/i, 'screenshot must be scoped to non-DOM content');
+  assert.match(screenshot.description, /text/i, 'screenshot must redirect text pages to a text read');
+});
+
+test('browser_evaluate accepts an optional ref and revision, and requires a fallback reason', () => {
   const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
   const evaluate = byName.get('browser_evaluate');
   assert.ok(evaluate, 'browser_evaluate missing from the registry');
   const props = evaluate.inputSchema.properties as Record<string, { description?: string }>;
   assert.ok(props.ref?.description, 'browser_evaluate.ref missing description');
   assert.ok(props.revision?.description, 'browser_evaluate.revision missing description');
-  assert.deepEqual(evaluate.inputSchema.required, ['expression']);
+  assert.ok(props.fallback?.description, 'browser_evaluate.fallback missing description');
+  assert.deepEqual(evaluate.inputSchema.required, ['expression', 'fallback']);
+});
+
+test('browser_evaluate is gated until the tab is oriented with an extension read', async () => {
+  const calls: string[] = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string) => {
+      calls.push(method);
+      return { ok: true };
+    }
+  };
+
+  // A fresh tab: evaluate is refused before any extension read, and the refusal
+  // must not reach the extension.
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_evaluate', { tabId: 9001, expression: '1', fallback: 'the digest omits the raw JSON payload' }),
+    (error: { code?: string }) => error.code === 'ORIENT_FIRST'
+  );
+  assert.deepEqual(calls, [], 'a refused evaluate must not be forwarded');
+
+  // Orienting with the digest opens the gate for that tab only.
+  await callBrowserTool(bridge as never, 'browser_snapshot', { tabId: 9001, format: 'digest' });
+  assert.deepEqual(await callBrowserTool(bridge as never, 'browser_evaluate', { tabId: 9001, expression: '1', fallback: 'the digest omits the raw JSON payload' }), { ok: true });
+  assert.deepEqual(calls, ['browser_snapshot', 'browser_evaluate']);
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_evaluate', { tabId: 9002, expression: '1', fallback: 'the digest omits the raw JSON payload' }),
+    (error: { code?: string }) => error.code === 'ORIENT_FIRST'
+  );
+});
+
+test('browser_evaluate requires a fallback reason before it is forwarded', async () => {
+  const calls: string[] = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string) => {
+      calls.push(method);
+      return { ok: true };
+    }
+  };
+
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_evaluate', { tabId: 9003, expression: '1' }),
+    (error: { code?: string }) => error.code === 'FALLBACK_REQUIRED'
+  );
+  await callBrowserTool(bridge as never, 'browser_snapshot', { tabId: 9003, format: 'digest' });
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_evaluate', { tabId: 9003, expression: '1', fallback: '   ' }),
+    (error: { code?: string }) => error.code === 'FALLBACK_REQUIRED'
+  );
+  assert.deepEqual(calls, ['browser_snapshot'], 'a missing fallback must not be forwarded');
+  assert.deepEqual(await callBrowserTool(bridge as never, 'browser_evaluate', { tabId: 9003, expression: '1', fallback: 'no extension tool returns the raw payload' }), { ok: true });
+  assert.deepEqual(calls, ['browser_snapshot', 'browser_evaluate']);
+});
+
+test('opening a tab re-closes the orientation gate for the session default tab', async () => {
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string) => (method === 'browser_open' ? { id: 9100 } : { ok: true })
+  };
+
+  await callBrowserTool(bridge as never, 'browser_snapshot', { format: 'digest' });
+  await callBrowserTool(bridge as never, 'browser_evaluate', { expression: '1', fallback: 'no extension tool returns the raw payload' });
+  await callBrowserTool(bridge as never, 'browser_open', { url: 'https://example.com' });
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_evaluate', { expression: '1', fallback: 'no extension tool returns the raw payload' }),
+    (error: { code?: string }) => error.code === 'ORIENT_FIRST'
+  );
 });
 
 test('browser_network is documented as a live metadata buffer', () => {
@@ -112,7 +198,8 @@ test('documented tools expose described input schema properties', () => {
   const evaluate = byName.get('browser_evaluate')!;
   const evaluateProps = evaluate.inputSchema.properties as Record<string, { description?: string }>;
   assert.match(String(evaluateProps.expression?.description), /10000|expression/i);
-  assert.deepEqual(evaluate.inputSchema.required, ['expression']);
+  assert.match(String(evaluateProps.fallback?.description), /fallback|FALLBACK_REQUIRED/i);
+  assert.deepEqual(evaluate.inputSchema.required, ['expression', 'fallback']);
 });
 
 test('ranking and filter params documented in the tool docs exist in the schemas', () => {
