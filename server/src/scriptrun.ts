@@ -1,6 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { openedTabId, pinReplayTab, type RecordedStep } from './record.js';
+import { openedTabId, pinReplayTab } from './replay.js';
+import type { RecordedStep } from './runfile.js';
+
+// Re-exported so a generated script can import both the runner and the upload
+// hydration from one runtime module.
+export { withUploadFiles } from './replay.js';
 
 export type WorkflowCall = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendStep, normalizeStep, parseRunFile, stepsToMarkdown } from '../dist/src/record.js';
+import { appendStep, normalizeStep } from '../dist/src/record.js';
+import { stepsToMarkdown } from '../dist/src/markdown.js';
+import { parseRunFile } from '../dist/src/runfile.js';
 
 test('normalizeStep drops session-scoped revision and tabId', () => {
   const step = normalizeStep('browser_snapshot', { tabId: 7, revision: 3, scope: 'viewport' });

@@ -1,4 +1,4 @@
-import type { RecordedStep } from './record.js';
+import type { RecordedStep } from './runfile.js';
 
 export type ScriptOptions = {
   // Absolute path to `server/dist/src/client.js` and `scriptrun.js`, so the
@@ -48,11 +48,8 @@ export function generateScript(file: string, steps: RecordedStep[], options: Scr
 // Deterministic runner: replays recorded steps, resolves {{placeholders}},
 // expands repeat/forEach loops, and writes the captured dataset as ${options.format.toUpperCase()}.
 // Regenerate with: node dist/src/cli.js export --script ${file} <out.mjs>
-import { createRequire } from 'node:module';
 import { callHost } from ${JSON.stringify(options.clientModule)};
-import { runWorkflow } from ${JSON.stringify(options.runtimeModule)};
-
-const require = createRequire(import.meta.url);
+import { runWorkflow, withUploadFiles } from ${JSON.stringify(options.runtimeModule)};
 
 const STEPS = ${stepsJson};
 const DEFAULTS = ${JSON.stringify({ out: options.out, format: options.format, delay: options.delay, capture: options.capture ?? null })};
@@ -60,13 +57,6 @@ const DEFAULTS = ${JSON.stringify({ out: options.out, format: options.format, de
 function readFlag(name) {
   const index = process.argv.indexOf('--' + name);
   return index !== -1 ? process.argv[index + 1] : undefined;
-}
-
-async function hydrateUpload(params) {
-  const { paths, ...rest } = params;
-  if (!Array.isArray(paths)) throw new Error('browser_upload requires a paths array');
-  const { readUploadFiles } = await import(${JSON.stringify(options.clientModule.replace(/client\.js$/, 'tools.js'))});
-  return { ...rest, files: await readUploadFiles(paths) };
 }
 
 const port = Number(process.env.FASTMCP_PORT ?? 9229);
@@ -86,7 +76,7 @@ function timeoutFor(method, params) {
 
 async function call(method, params) {
   let payload = params;
-  if (method === 'browser_upload') payload = await hydrateUpload(params);
+  if (method === 'browser_upload') payload = await withUploadFiles(params);
   if (browser) payload = { ...payload, browser };
   if (profile) payload = { ...payload, profile };
   return callHost(port, token, method, payload, timeoutFor(method, payload));

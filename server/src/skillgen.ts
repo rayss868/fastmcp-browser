@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { RecordedStep } from './record.js';
+import type { RecordedStep } from './runfile.js';
 
 export type SkillOptions = {
   name: string;
