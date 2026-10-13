@@ -190,7 +190,7 @@ function ruleRow(rule) {
   const toggle = document.createElement('input');
   toggle.type = 'checkbox';
   toggle.checked = rule.enabled;
-  toggle.title = 'Aktif / nonaktif';
+  toggle.title = 'Enabled / disabled';
   toggle.addEventListener('change', async () => {
     rule.enabled = toggle.checked;
     await persist();
@@ -215,11 +215,11 @@ function ruleRow(rule) {
   actions.className = 'rule-actions';
   const edit = document.createElement('button');
   edit.type = 'button';
-  edit.textContent = 'Ubah';
+  edit.textContent = 'Edit';
   edit.addEventListener('click', () => openForm(rule));
   const remove = document.createElement('button');
   remove.type = 'button';
-  remove.textContent = 'Hapus';
+  remove.textContent = 'Delete';
   remove.addEventListener('click', async () => {
     rules = rules.filter(entry => entry.id !== rule.id);
     if (editingId === rule.id) closeForm();
