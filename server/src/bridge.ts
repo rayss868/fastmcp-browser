@@ -24,8 +24,15 @@ export type BrowserBridge = {
   onEvent(listener: (event: EventMessage) => void): () => void;
   instances(): InstanceInfo[];
   useInstance(id: string): { active: string; instances: InstanceInfo[] };
+  control(name: string, params?: Record<string, unknown>): Promise<unknown>;
   close(): Promise<void>;
   token: string;
+};
+
+export type BridgeOptions = {
+  // Handles server-local control messages (e.g. recording start/stop) sent by
+  // a peer CLI. It never reaches the extension.
+  control?: (name: string, params: Record<string, unknown>) => unknown | Promise<unknown>;
 };
 
 type Connection = {
@@ -47,7 +54,7 @@ type Connection = {
 
 export type RouteSelector = { instance?: string; browser?: string; profile?: string };
 
-export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_TOKEN): BrowserBridge {
+export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_TOKEN, options: BridgeOptions = {}): BrowserBridge {
   const token = configuredToken ?? 'fastmcp-local-dev';
   let mode: 'host' | 'peer' = 'host';
   let server: WebSocketServer | undefined;
@@ -194,6 +201,18 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
               const failure = error as Error & { code?: string; retryable?: boolean };
               candidate.send(JSON.stringify({ id: message.id, ok: false, error: { code: failure.code ?? 'INVALID_ARGUMENT', message: failure.message, retryable: failure.retryable ?? false } }));
             }
+            return;
+          }
+          if (message.type === 'control' && typeof message.id === 'string' && typeof message.name === 'string') {
+            const callId = message.id;
+            const params = (message.params as Record<string, unknown> | undefined) ?? {};
+            Promise.resolve()
+              .then(() => {
+                if (!options.control) throw Object.assign(new Error(`Unknown control: ${message.name}`), { code: 'UNSUPPORTED_CAPABILITY' });
+                return options.control(message.name as string, params);
+              })
+              .then(result => candidate.send(JSON.stringify({ id: callId, ok: true, result: result ?? null })))
+              .catch((error: Error & { code?: string; retryable?: boolean }) => candidate.send(JSON.stringify({ id: callId, ok: false, error: { code: error.code ?? 'INVALID_ARGUMENT', message: error.message, retryable: error.retryable ?? false } })));
             return;
           }
           return;
@@ -346,6 +365,20 @@ export function createBridge(port = 9229, configuredToken = process.env.FASTMCP_
       pinnedId = connection.id;
       broadcastInstances();
       return { active: activeId, instances: snapshot() };
+    },
+    control(name, params = {}) {
+      if (mode === 'peer') {
+        const socket = hostSocket;
+        if (!socket || !hostReady || socket.readyState !== 1) return Promise.reject(Object.assign(new Error('No browser connection'), { code: 'NO_CONNECTION', retryable: true }));
+        const callId = `r${++counter}`;
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { pending.delete(callId); reject(Object.assign(new Error('Control request timed out'), { code: 'ACTION_TIMEOUT' })); }, 10000);
+          pending.set(callId, { resolve, reject, timer });
+          socket.send(JSON.stringify({ type: 'control', id: callId, name, params }));
+        });
+      }
+      if (!options.control) return Promise.reject(Object.assign(new Error(`Unknown control: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' }));
+      return Promise.resolve(options.control(name, params));
     },
     request(method, params = {}, timeoutMs = 15000) {
       if (mode === 'peer') {

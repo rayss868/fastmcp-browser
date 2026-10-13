@@ -22,8 +22,6 @@ const discovery = createSnapshotEngine({
 const state = surface?.state ?? {
   get revision() { return refs.revision; },
   refs,
-  observer: null,
-  quietTimer: null,
   recovered: false,
   lastCatalog: null,
   lastDigest: null,
@@ -45,10 +43,6 @@ const stealthLayer = pointerController.stealth ?? createStealthLayer({ documentR
 const actionability = createActionability({ documentRef: document });
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-
-function resetRefs() {
-  refs.reset();
-}
 
 function locate(ref, revision) {
   try {
@@ -745,7 +739,10 @@ if (!state.observer) {
   state.observer = new MutationObserver(() => {
     state.digestInvalidated = true;
     clearTimeout(state.quietTimer);
-    state.quietTimer = setTimeout(() => { resetRefs(); refreshDigest(); }, 100);
+    // Only refresh the warm digest; refs are no longer reset here — a live
+    // element stays resolvable until it leaves the DOM, so a page whose
+    // countdown/carousel mutates every second no longer expires every ref.
+    state.quietTimer = setTimeout(() => { refreshDigest(); }, 100);
   });
   // Attributes and character data too: SPA controls often flip aria-expanded,
   // value, or checked without touching childList, and those are exactly the

@@ -66,13 +66,27 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
       try {
         results = await scripting.executeScript({
           target: { tabId },
-          // MAIN world: extension CSP forbids unsafe-eval in the isolated world,
-          // so eval/Function only work under the target page's CSP here.
+          // MAIN world: the extension CSP forbids unsafe-eval in the isolated
+          // world, so eval only works when the *page's* CSP allows it. A strict
+          // page policy (nonce + strict-dynamic, no 'unsafe-eval') makes every eval
+          // call throw, and executeScript then resolves with result: undefined --
+          // indistinguishable from an expression that genuinely returned null.
+          // Probe first so the caller gets an actionable error instead of a null.
           world: 'MAIN',
           func: (expr, attr, tokenArg, bindElement) => {
             const element = bindElement && tokenArg ? document.querySelector(`[${attr}="${tokenArg}"]`) : null;
             try {
-              const evaluated = eval(expr);
+              try {
+                eval('0');
+              } catch (error) {
+                return { __fastmcpEvalBlocked: true, message: String(error?.message ?? error) };
+              }
+              let evaluated;
+              try {
+                evaluated = eval(expr);
+              } catch (error) {
+                return { __fastmcpEvalThrew: true, message: String(error?.message ?? error) };
+              }
               return bindElement && typeof evaluated === 'function' ? evaluated(element) : evaluated;
             } finally {
               if (element) element.removeAttribute(attr);
@@ -84,13 +98,25 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
         throw evaluationError(`Evaluation failed: ${error?.message ?? String(error)}`);
       }
 
-      return serialize(results?.[0]?.result ?? null);
+      const outcome = results?.[0]?.result;
+      if (outcome && typeof outcome === 'object' && outcome.__fastmcpEvalBlocked) {
+        throw evaluationError(
+          `The page's Content-Security-Policy blocks eval, so browser_evaluate cannot run here (${outcome.message}). On CSP-restricted pages use browser_inspect with a selector to read DOM state.`,
+          'UNSUPPORTED_CAPABILITY'
+        );
+      }
+      if (outcome && typeof outcome === 'object' && outcome.__fastmcpEvalThrew) {
+        throw evaluationError(`Expression threw: ${outcome.message}`);
+      }
+      return serialize(outcome ?? null);
     },
 
     async inspect(params = {}) {
       const tabId = Number(params?.tabId);
       if (!Number.isInteger(tabId)) throw evaluationError('tabId is required for browser_inspect.');
       const ref = typeof params?.ref === 'string' && params.ref ? params.ref : null;
+      const selector = typeof params?.selector === 'string' && params.selector.trim() ? params.selector.trim() : null;
+      if (!ref && !selector) throw evaluationError('browser_inspect needs a ref or a selector.');
       const token = ref ? await refToken(tabId, ref, params?.revision) : null;
 
       let results;
@@ -98,10 +124,15 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
         results = await scripting.executeScript({
           target: { tabId },
           world: 'MAIN',
-          func: (attr, tokenArg, bindElement, pathArg) => {
-            const element = bindElement && tokenArg ? document.querySelector(`[${attr}="${tokenArg}"]`) : null;
+          // A selector skips the ref store entirely, so browser_inspect stays usable
+          // on pages whose DOM churns or whose CSP forbids eval -- the two cases that
+          // together made every ref-based read on such pages fail.
+          func: (attr, tokenArg, bindElement, pathArg, selectorArg) => {
+            const element = bindElement && tokenArg
+              ? document.querySelector(`[${attr}="${tokenArg}"]`)
+              : (selectorArg ? document.querySelector(selectorArg) : null);
             try {
-              if (!element) return { ok: false, error: 'No element bound; pass a ref.' };
+              if (!element) return { ok: false, error: selectorArg ? 'No element matches the selector.' : 'No element bound; pass a ref or selector.' };
               const summary = { ok: true, tag: element.tagName ? element.tagName.toLowerCase() : null };
               const keys = Object.keys(element);
               const fiberKey = keys.find(key => key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$'));
@@ -135,7 +166,7 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
               if (element) element.removeAttribute(attr);
             }
           },
-          args: [attribute, token, Boolean(ref), params?.path ?? null]
+          args: [attribute, token, Boolean(ref), params?.path ?? null, selector]
         });
       } catch (error) {
         throw evaluationError(`Inspection failed: ${error?.message ?? String(error)}`);

@@ -1,6 +1,8 @@
 import type { BrowserBridge } from './bridge.js';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
+import { appendStep, normalizeStep } from './record.js';
+import { activeRecordFile } from './recorder.js';
 
 const MIME_BY_EXT: Record<string, string> = {
   '.txt': 'text/plain',
@@ -77,7 +79,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value or selector/value pairs, and an optional submit ref (or submitSelector) to click afterward. Prefer this over clicking each field first — everything happens in a single call, so there is no gap between calls for a stray user click to move the caret and misfile a value. Each field is re-resolved against the live DOM, so a rerender between fields is recovered automatically. Inputs, textareas, contenteditable, native selects, ARIA comboboxes, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad target does not waste the whole call. The response carries a compact DOM diff.',
   browser_act: 'One call that finds the target, acts, waits for the DOM to settle, then reports whether anything changed plus a compact diff and the element new ref — so a follow-up snapshot is usually unnecessary. Pass action (click, fill, type, press, select, hover) with a target ref or selector; stale refs are re-resolved automatically. Set waitAfter:false to skip the settle wait, or waitState:"network_idle" when the effect is network-driven. The response carries refs for every element that appeared or changed, so you can act on them without re-snapshotting. refresh defaults to "auto": a compact post-action snapshot is attached whenever the page navigated, the target disappeared, or the diff shows a large rerender; use "digest" to always attach the light interactive-control digest (the cheapest way to see the post-action state), "snapshot" for a full one, "none" for refs only.',
   browser_find: 'Search the current page for text or a regular expression and return only the matching elements with their ref plus a short ancestor path — far cheaper than a snapshot when you need one element on a large page. Pass exactly one of text (case-insensitive substring) or regex, plus a small limit; matches carry refs usable by any action tool.',
-  browser_inspect: 'Read the framework state behind an element by ref, resolved in the page MAIN world: returns the tag, the controlling React/Vue/Angular marker, up to 10 enclosing React component names, and the React props. Pass path to read one property of the element (e.g. "props.children"). Use it to understand what a control represents, not to act.',
+  browser_inspect: 'Read the framework state behind an element by ref or selector, resolved in the page MAIN world: returns the tag, the controlling React/Vue/Angular marker, up to 10 enclosing React component names, and the React props. Pass path to read one property of the element (e.g. "props.children"). A selector skips the ref store entirely, so it also works on pages whose CSP blocks browser_evaluate and on DOMs that rerender constantly. Use it to understand what a control represents, not to act.',
   browser_scroll: 'Scroll the page of the given tab by x/y deltas.',
   browser_wait: 'Pause the session for the given milliseconds so dynamic page content can settle. Prefer browser_wait_for when you can name the condition you are waiting on.',
   browser_wait_for: 'Wait on a tab until a page condition is met instead of sleeping a fixed time: state:"visible" (default with selector) or "attached" for a selector, "text" for page text, "dom_stable" (no DOM mutations for stableMs, default 300), "network_idle" (no recent resource activity), or "digest-changes" (the AI-readable control digest changed, i.e. the page state the agent reads actually moved, unlike raw DOM churn). Survives navigations up to timeoutMs (default 30000, max 120000) and returns satisfied plus the current snapshot revision.',
@@ -196,6 +198,7 @@ const schemas: Record<string, JsonSchema> = {
     tabId: TAB_ID,
     ref: REF,
     revision: REVISION,
+    selector: SELECTOR,
     path: { type: 'string', description: 'Optional dot-path read from the resolved element (e.g. "props.children").' }
   }),
   browser_scroll: object({ tabId: TAB_ID, x: NUM, y: { type: 'number', description: 'Vertical scroll delta in CSS pixels.' } }),
@@ -283,13 +286,39 @@ async function requestWithRecovery(bridge: BrowserBridge, name: string, params: 
   }
 }
 
+function maybeRecord(name: string, params: Record<string, unknown>): void {
+  // Recording must never break a tool call, and only successful calls are
+  // worth replaying — so this runs fire-and-forget after a call succeeds.
+  // Uploads are recorded with their original local `paths`, not the expanded
+  // base64 payload, so replay re-reads the files from disk.
+  try {
+    const file = activeRecordFile();
+    if (!file) return;
+    const step = normalizeStep(name, params);
+    if (!step) return;
+    void appendStep(file, step).catch((error: Error) => {
+      process.stderr.write(`fastmcp-browser: failed to record ${name} to ${file}: ${error.message}\n`);
+    });
+  } catch {
+    // Recording is best-effort by design.
+  }
+}
+
 export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
   if (name === 'browser_instances') return bridge.instances();
-  if (name === 'browser_use_instance') return bridge.useInstance(String(params.id ?? ''));
+  if (name === 'browser_use_instance') {
+    const result = bridge.useInstance(String(params.id ?? ''));
+    maybeRecord(name, params);
+    return result;
+  }
   if (name === 'browser_upload') {
     const { paths, ...rest } = params;
-    return bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) }, timeoutFor(name, params));
+    const result = await bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) }, timeoutFor(name, params));
+    maybeRecord(name, params);
+    return result;
   }
-  return requestWithRecovery(bridge, name, params);
+  const result = await requestWithRecovery(bridge, name, params);
+  maybeRecord(name, params);
+  return result;
 }
