@@ -185,7 +185,7 @@ The tool name must match a known tool; the optional second argument is a JSON ob
 | Read the page | `browser_snapshot` (scoped via `scope`/`selector`/`interactiveOnly`/`maxDepth`, ranked by `goal`/`relevantOnly`), `browser_find` (text or regex lookup that returns only the matching elements with refs), `browser_inventory`, `browser_screenshot` |
 | Interact | `browser_click`, `browser_fill`, `browser_type`, `browser_press`, `browser_select` (native `<select>` or ARIA combobox/listbox), `browser_fill_form` (fills many fields plus an optional submit in one call; fields re-resolve per step) |
 | Pointer & scroll | `browser_pointer_move`, `browser_pointer_click`, `browser_pointer_drag`, `browser_scroll` |
-| Timing | `browser_wait`, `browser_wait_for` (selector / text / dom_stable / network_idle) |
+| Timing | `browser_wait`, `browser_wait_for` (selector / text / dom_stable / network_idle / digest-changes) |
 | Data | `browser_cookies`, `browser_storage`, `browser_download`, `browser_evaluate` (pass `ref` + `revision` to scope the script to one snapshot element, no selector needed) |
 | Upload | `browser_upload` (reads local paths on the host and attaches them natively; `ref` or `selector` optional) |
 | Network observe | `browser_network` (live request/response headers and bounded upload metadata; Firefox captures up to 64 KB of text response body per request; no blocking or modification) |
