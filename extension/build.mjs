@@ -26,6 +26,7 @@ async function copyContentEngine(out) {
   const files = [
     'content/refs.js',
     'content/semantics.js',
+    'content/readable.js',
     'content/stealth.js',
     'content/snapshot.js',
     'content/pointer.js',
@@ -58,6 +59,7 @@ async function build(target) {
   await copyFile(resolve(source, 'router.js'), resolve(out, 'router.js'));
   await copyFile(resolve(source, 'session.js'), resolve(out, 'session.js'));
   await copyFile(resolve(source, 'wait.js'), resolve(out, 'wait.js'));
+  await copyFile(resolve(source, 'navigation.js'), resolve(out, 'navigation.js'));
   await copyFile(resolve(source, 'network-monitor.js'), resolve(out, 'network-monitor.js'));
   await copyFile(resolve(source, 'screenshot.js'), resolve(out, 'screenshot.js'));
   await copyFile(resolve(source, 'evaluate.js'), resolve(out, 'evaluate.js'));
