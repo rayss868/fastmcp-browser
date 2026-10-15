@@ -57,6 +57,13 @@ async function checkForRelease() {
     const link = document.createElement('a');
     link.href = url;
     link.textContent = 'Lihat release';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      if (typeof api.tabs?.create === 'function') void api.tabs.create({ url });
+      else globalThis.open(url, '_blank', 'noopener');
+    });
     fields.release.append(link);
     fields.release.hidden = false;
   } catch {

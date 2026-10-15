@@ -23,6 +23,8 @@ test('status popup checks GitHub Releases and only links newer versions', async 
   assert.match(script, /compareVersions\(match\[1\], installed\) <= 0/);
   assert.match(script, /Versi baru tersedia/);
   assert.match(script, /createElement\('a'\)/);
+  assert.match(script, /tabs\?\.create/);
+  assert.match(script, /preventDefault/);
   assert.match(script, /getManifest\(\)\.version/);
   assert.match(manifest, /connect-src[^;]*https:\/\/api\.github\.com/);
 });

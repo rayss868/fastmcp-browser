@@ -131,6 +131,10 @@ is the source of truth for what changed in each version.
   `waitForThaw()` until `frozen` clears, and retries internally — actions wake
   proactively before injecting, so one AI turn suffices instead of
   fail-then-manual-retry.
+- **Status popup "Lihat release" link opens in a new tab.** A plain `<a>` click
+  inside an extension popup navigates the popup itself instead of opening a
+  tab, so the link appeared unclickable. It now calls `tabs.create({ url })`
+  via a click handler.
 
 ## [0.5.0] - 2026-10-13
 
