@@ -25,15 +25,31 @@ export function createPointerController({ documentRef, windowRef, refs }) {
     return { x, y, width, height };
   }
 
-  function target(input) {
-    if (!input.ref) return null;
-    const element = refs.resolve(input.ref, input.revision);
+  // Bring an element to the middle of the viewport before its rect is read. A
+  // source or drop target below the fold otherwise yields a viewport coordinate
+  // outside innerWidth/innerHeight (rejected by point()) or a rect that no longer
+  // matches where the element is drawn, so the gesture lands in the wrong place.
+  // Opt-in via scrollIntoView:true so a caller that already positioned the page
+  // is not moved.
+  function bringIntoView(element, input = {}) {
+    if (input.scrollIntoView === true && element && typeof element.scrollIntoView === 'function') {
+      element.scrollIntoView({ block: 'center', inline: 'center' });
+    }
+    return element;
+  }
+
+  function center(element) {
     const rect = element.getBoundingClientRect();
     return {
       element,
       x: rect.left + rect.width / 2,
       y: rect.top + rect.height / 2
     };
+  }
+
+  function target(input) {
+    if (!input.ref) return null;
+    return center(bringIntoView(refs.resolve(input.ref, input.revision), input));
   }
 
   function dispatch(element, type, x, y, buttons = 0) {
@@ -107,8 +123,17 @@ export function createPointerController({ documentRef, windowRef, refs }) {
   }
 
   function drag(input) {
-    const start = input.from?.ref ? target({ ...input.from, revision: input.revision }) : point(input.from ?? {});
-    const end = input.to?.ref ? target({ ...input.to, revision: input.revision }) : point(input.to ?? {});
+    const scroll = input.scrollIntoView === true;
+    const fromInput = { ...(input.from ?? {}), revision: input.revision, scrollIntoView: scroll };
+    const toInput = { ...(input.to ?? {}), revision: input.revision, scrollIntoView: scroll };
+    let start = fromInput.ref ? target(fromInput) : point(fromInput);
+    const end = toInput.ref ? target(toInput) : point(toInput);
+    // Scrolling the drop target into view can move the source back out from under
+    // the gesture, so when both endpoints are refs re-read the source center after
+    // the second scroll instead of pressing down on a coordinate it has left.
+    if (scroll && fromInput.ref && toInput.ref) {
+      start = center(refs.resolve(fromInput.ref, fromInput.revision));
+    }
     const startElement = start.element ?? documentRef.elementFromPoint(start.x, start.y);
     const endElement = end.element ?? documentRef.elementFromPoint(end.x, end.y);
     if (!startElement || !endElement) throw Object.assign(new Error('Drag target not found.'), { code: 'ELEMENT_NOT_FOUND' });

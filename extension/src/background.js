@@ -261,7 +261,19 @@ async function tabs(method, params) {
     await session.reconcile();
     return session.listTabs();
   }
-  if (method === 'browser_open') return session.openTab(String(params.url), { newTab: params.newTab === true });
+  if (method === 'browser_open') {
+    const tab = await session.openTab(String(params.url), { newTab: params.newTab === true });
+    // Report the whole group alongside the opened tab so the model knows what
+    // is already open (id, title, url) and reuses tabs instead of opening
+    // duplicates; reused:true flags that the URL was already loaded.
+    const summary = (await session.listTabs()).map(t => ({
+      id: t.id,
+      title: String(t.title ?? '').slice(0, 100),
+      url: String(t.url ?? '').slice(0, 200),
+      active: Boolean(t.active)
+    }));
+    return { ...tab, tabs: summary };
+  }
   if (method === 'browser_close') return api.tabs.remove(Number(params.tabId));
   if (method === 'browser_focus') return api.tabs.update(Number(params.tabId), { active: true });
   throw Object.assign(new Error(`Unsupported tab method: ${method}`), { code: 'UNSUPPORTED_CAPABILITY' });

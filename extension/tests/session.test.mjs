@@ -172,6 +172,50 @@ test('openTab reuses the live automation tab, including concurrent opens', async
   assert.deepEqual((await session.info()).tabIds, [created[0].id]);
 });
 
+test('openTab returns a tab already showing the same URL without navigating it', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  const created = [];
+  const updated = [];
+  let nextTabId = 70;
+  api.tabs.create = async properties => {
+    const tab = { id: nextTabId++, url: properties.url, active: properties.active };
+    created.push(tab);
+    api.alive.add(tab.id);
+    return tab;
+  };
+  api.tabs.update = async (tabId, properties) => {
+    updated.push({ tabId, ...properties });
+    const tab = { id: tabId, ...properties };
+    return tab;
+  };
+  api.tabs.query = async () => [...alive(api)].map(id => {
+    for (const [gid, members] of api.groups) {
+      if (members.has(id)) return { id, groupId: gid, url: loaded.get(id), title: 'Page', active: false };
+    }
+    return { id, url: loaded.get(id), title: 'Page', active: false };
+  });
+  const alive = a => a.alive;
+  const loaded = new Map();
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  const first = await session.openTab('https://example.test/feed?x=1');
+  loaded.set(first.id, 'https://example.test/feed?x=1');
+
+  // same page with a different hash, and with a trailing slash, still matches
+  const again = await session.openTab('https://example.test/feed?x=1#section');
+  assert.equal(again.reused, true);
+  assert.equal(again.id, first.id);
+  assert.equal(created.length, 1, 'no second tab may be created');
+  assert.equal(updated.length, 0, 'the existing tab must not be re-navigated');
+
+  // a different query is a different page and must navigate the live tab
+  const third = await session.openTab('https://example.test/feed?x=2');
+  assert.equal(created.length, 1);
+  assert.equal(third.id, first.id);
+  assert.equal(updated.length, 1);
+});
+
 test('openTab reuses a grouped tab the session had not recorded yet', async () => {
   const storage = createStorage({
     [SESSION_STORAGE_KEY]: { id: 's-seeded', groupId: 7, groupTitle: 'Automation', tabIds: [] }

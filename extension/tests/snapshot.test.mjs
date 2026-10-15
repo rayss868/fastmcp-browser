@@ -213,3 +213,135 @@ test('maxNameChars raises the per-element cap so compact can carry long text', (
 
   assert.ok(result.text.includes('x'.repeat(500)), 'the raised cap must return the full block text');
 });
+
+// A widget's state (a menu is open, a toggle is pressed) is what tells a model
+// whether it must click before reading — Playwright's aria snapshot carries the
+// same attributes as [attr=value].
+test('snapshot carries ARIA state attributes on each element', () => {
+  const button = { tagName: 'BUTTON', role: 'button', textContent: 'Menu', visible: true };
+  const attrs = { 'aria-expanded': 'true', 'aria-pressed': 'false', 'aria-haspopup': 'menu' };
+  button.getAttribute = key => (key === 'role' ? button.role : (attrs[key] ?? null));
+  button.getBoundingClientRect = () => ({ x: 1, y: 2, width: 30, height: 10 });
+  button.isConnected = true;
+  const documentRef = { title: 'Fixture', querySelectorAll: () => [button], getElementById: () => null };
+  const windowRef = {
+    location: { href: 'https://fixture.test/' },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    HTMLInputElement: class {}, HTMLButtonElement: class {}, HTMLFormElement: class {},
+    CSS: { escape: value => value }
+  };
+  const semantics = createDomSemantics(documentRef, windowRef);
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const item = engine.snapshot().elements[0];
+
+  assert.equal(item.expanded, 'true');
+  assert.equal(item.haspopup, 'menu');
+  // aria-pressed="false" is the default, so it must not bloat the payload.
+  assert.equal(item.pressed, undefined);
+});
+
+test('format:aria nests a child control under its parent and keeps refs', () => {
+  const parent = { tagName: 'DIV', role: 'group', textContent: '', visible: true };
+  const child = { tagName: 'BUTTON', role: 'button', textContent: 'Save', visible: true };
+  parent.contains = element => element === parent || element === child;
+  for (const node of [parent, child]) {
+    node.getAttribute = key => (key === 'role' ? node.role : null);
+    node.getBoundingClientRect = () => ({ x: 1, y: 2, width: 30, height: 10 });
+    node.isConnected = true;
+  }
+  const documentRef = { title: 'Fixture', querySelectorAll: () => [parent, child], getElementById: () => null };
+  const windowRef = {
+    location: { href: 'https://fixture.test/' },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    HTMLInputElement: class {}, HTMLButtonElement: class {}, HTMLFormElement: class {},
+    CSS: { escape: value => value }
+  };
+  const semantics = createDomSemantics(documentRef, windowRef);
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const result = engine.snapshot({ format: 'aria' });
+
+  // The parent renders at depth 0 and the child is indented one level under it.
+  assert.match(result.text, /^- group \[ref=e\d+\]$/m);
+  assert.match(result.text, /^ {2}- button "Save" \[ref=e\d+\]$/m);
+});
+
+test('without a goal, chrome controls rank after main-content controls', () => {
+  // DOM order puts the sidebar first on a real page (Moodle: e12-e60 are course
+  // treeitems before the assessment link). A limit then cuts away the control
+  // the caller wants, so with no goal the content partition must lead.
+  function node(tagName, role, text, parentElement = null) {
+    const element = {
+      tagName, role, textContent: text, visible: true, parentElement, isConnected: true
+    };
+    element.getAttribute = key => {
+      if (key === 'role') return role;
+      if (key === 'class') return element.className ?? null;
+      if (key === 'id') return element.id ?? null;
+      if (key === 'aria-label') return null;
+      return null;
+    };
+    element.getBoundingClientRect = () => ({ x: 1, y: 2, width: 30, height: 10 });
+    return element;
+  }
+  const nav = node('NAV', null, '');
+  nav.className = 'sidebar';
+  const main = node('MAIN', null, '');
+  const sidebarLink = node('A', 'link', 'Course Introduction', nav);
+  const assessmentLink = node('A', 'link', 'Unit 1 Assessment', main);
+  const nodes = [sidebarLink, assessmentLink];
+
+  const documentRef = { title: 'Fixture', querySelectorAll: () => nodes, getElementById: () => null };
+  const windowRef = {
+    location: { href: 'https://fixture.test/' },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    HTMLInputElement: class {}, HTMLButtonElement: class {}, HTMLFormElement: class {},
+    CSS: { escape: value => value }
+  };
+  const semantics = createDomSemantics(documentRef, windowRef);
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+
+  const plain = engine.snapshot();
+  assert.deepEqual(plain.elements.map(element => element.name), ['Unit 1 Assessment', 'Course Introduction']);
+
+  // A limit of 1 must keep the main-content link, not the sidebar one.
+  const limited = engine.snapshot({ limit: 1 });
+  assert.equal(limited.elements.length, 1);
+  assert.equal(limited.elements[0].name, 'Unit 1 Assessment');
+
+  // An explicit goal still ranks by relevance and overrides the chrome demotion.
+  const goal = engine.snapshot({ goal: 'Course Introduction', relevantOnly: true });
+  assert.deepEqual(goal.elements.map(element => element.name), ['Course Introduction']);
+});
+
+test('a control that wraps an image carries hasImage and imageUrl', () => {
+  // A picture answer choice is a label wrapping the <img>, and its name is just
+  // "a." — the caller cannot tell it apart from a text option without a hint,
+  // so the descriptor must say an image sits behind it.
+  const image = { tagName: 'IMG', src: 'pics/choice-a.png', currentSrc: 'https://fixture.test/pics/choice-a.png', isConnected: true };
+  const label = {
+    tagName: 'LABEL', visible: true, isConnected: true, textContent: 'a.',
+    querySelector: selector => (selector === 'img' ? image : null)
+  };
+  label.getAttribute = key => (key === 'role' ? 'radio' : key === 'aria-label' ? 'a.' : null);
+  label.getBoundingClientRect = () => ({ x: 1, y: 2, width: 40, height: 40 });
+  const documentRef = { title: 'Fixture', querySelectorAll: () => [label], getElementById: () => null };
+  const windowRef = {
+    location: { href: 'https://fixture.test/mod/quiz/attempt.php' },
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
+    HTMLInputElement: class {}, HTMLButtonElement: class {}, HTMLFormElement: class {},
+    CSS: { escape: value => value }
+  };
+  const semantics = createDomSemantics(documentRef, windowRef);
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const item = engine.snapshot().elements[0];
+
+  assert.equal(item.hasImage, true);
+  assert.equal(item.imageUrl, 'https://fixture.test/pics/choice-a.png');
+});
+
+test('a plain control carries no image flag', () => {
+  const { documentRef, windowRef, semantics } = fixture();
+  const engine = createSnapshotEngine({ documentRef, windowRef, semantics, refs: createReferenceStore() });
+  const button = engine.snapshot().elements.find(element => element.name === 'Save');
+  assert.equal(button.hasImage, undefined);
+});

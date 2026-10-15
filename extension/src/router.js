@@ -23,6 +23,7 @@ const TAB_METHODS = new Set([
   'browser_close',
   'browser_focus',
   'browser_screenshot',
+  'browser_image',
   'browser_cookies',
   'browser_storage',
   'browser_download',

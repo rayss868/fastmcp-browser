@@ -101,17 +101,38 @@ export function createSessionManager({
 
   let opening = Promise.resolve();
 
+  // Two URLs point at the same page when origin, path (ignoring a trailing
+  // slash) and query match; only the hash may differ.
+  function samePage(a, b) {
+    try {
+      const ua = new URL(a);
+      const ub = new URL(b);
+      const trim = path => path.replace(/\/$/, '');
+      return ua.origin === ub.origin && trim(ua.pathname) === trim(ub.pathname) && ua.search === ub.search;
+    } catch {
+      return false;
+    }
+  }
+
   return {
     mode,
 
     async openTab(url, { newTab = false } = {}) {
       const operation = opening.then(async () => {
         const s = await ensure();
-        const openTabs = newTab ? [] : await api.tabs.query({});
+        const groupTabs = await this.listTabs();
+        // A URL already loaded in the group is reused as-is — no create, no
+        // navigation, so the model revisiting a page does not reload it and a
+        // second site does not clobber the first tab.
+        if (!newTab) {
+          const already = groupTabs.find(tab => tab.url && samePage(tab.url, url));
+          if (already) return { ...already, reused: true };
+        }
         // Native groups are the source of truth, so reuse any live tab already
         // in the Automation group rather than only the ids this session
         // recorded. s.tabIds can lag behind a tab the user dragged in, and
         // restricting reuse to recorded ids would open a duplicate instead.
+        const openTabs = newTab ? [] : await api.tabs.query({});
         const reusableTabId = newTab
           ? undefined
           : supportsNativeGroups() && s.groupId !== null

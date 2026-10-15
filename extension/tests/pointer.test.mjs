@@ -58,3 +58,34 @@ test('pointer rejects stale refs and invalid coordinates', () => {
   assert.throws(() => controller.move({ ref: 'canvas', revision: 2 }), error => error.code === 'STALE_REF');
   assert.throws(() => controller.move({ x: -1, y: 2 }), error => error.code === 'INVALID_ARGUMENT');
 });
+
+test('drag scrolls a ref endpoint into view only when asked', () => {
+  // A drop target below the fold yields a viewport coordinate outside the
+  // viewport; scrollIntoView:true must scroll it first and read the fresh rect,
+  // while the default must leave the page exactly as it is.
+  const scrolled = [];
+  const element = {
+    tagName: 'DIV',
+    getBoundingClientRect: () => ({ left: 40, top: 900, width: 20, height: 20 }),
+    scrollIntoView: options => scrolled.push(options),
+    dispatchEvent: () => true
+  };
+  globalThis.PointerEvent ??= class PointerEvent {
+    constructor(type, init) { this.type = type; Object.assign(this, init); }
+  };
+  globalThis.MouseEvent ??= class MouseEvent {
+    constructor(type, init) { this.type = type; Object.assign(this, init); }
+  };
+  const documentRef = { elementFromPoint: () => element };
+  const windowRef = { innerWidth: 200, innerHeight: 120 };
+  const refs = { resolve: () => element };
+  const controller = createPointerController({ documentRef, windowRef, refs });
+
+  controller.drag({ from: { ref: 'a' }, to: { ref: 'b' }, steps: 1 });
+  assert.equal(scrolled.length, 0, 'the default must not move the page');
+
+  const result = controller.drag({ from: { ref: 'a' }, to: { ref: 'b' }, steps: 1, scrollIntoView: true });
+  assert.equal(scrolled.length, 2, 'both ref endpoints are scrolled into view');
+  assert.deepEqual(scrolled[0], { block: 'center', inline: 'center' });
+  assert.deepEqual(result.to, { x: 50, y: 910 }, 'the center comes from the fresh rect after scrolling');
+});

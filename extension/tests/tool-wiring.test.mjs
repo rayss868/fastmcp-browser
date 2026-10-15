@@ -77,6 +77,43 @@ test('a text read is a snapshot format, and its cost stays off the warm digest',
   assert.ok(!/refreshDigest[\s\S]{0,400}pageText\(/.test(engine), 'the warm refresh must never read page text');
 });
 
+test('the readable layer is bundled and reaches the engine', async () => {
+  const build = await read('../build.mjs');
+  const engine = await read('../src/content/engine.js');
+  // The content bundle is a plain concatenation of these files; a module left
+  // out of the list silently disappears from the injected engine.
+  assert.ok(build.includes("'content/readable.js'"), 'build must bundle content/readable.js');
+  assert.ok(engine.includes("from './readable.js'"), 'engine must import the readable helpers');
+  assert.ok(engine.includes('function pageMarkdown('), 'engine must expose a markdown read');
+});
+
+test('markdown, aria, and delta are snapshot formats on the same path', async () => {
+  const engine = await read('../src/content/engine.js');
+  const snapshot = await read('../src/content/snapshot.js');
+  assert.ok(engine.includes("input.format === 'markdown'"), 'snapshot must route format markdown');
+  assert.ok(snapshot.includes("options.format === 'aria'"), 'snapshot must render the aria tree');
+  assert.ok(engine.includes('input.delta === true'), 'snapshot must support the delta mode');
+  assert.ok(snapshot.includes('function buildTree('), 'the aria tree must nest candidates under their ancestors');
+});
+
+test('a text or markdown read wraps page content in untrusted boundaries', async () => {
+  const engine = await read('../src/content/engine.js');
+  const readable = await read('../src/content/readable.js');
+  assert.ok(readable.includes('export function wrapUntrusted('), 'the boundary helper must be exported');
+  assert.ok(readable.includes('export function contentMarker('), 'the per-call marker must be exported');
+  assert.ok(engine.includes('wrapUntrusted(body.text, marker)'), 'reads must fence page text');
+  // The main-content root is detected, not a bare main/body lookup.
+  assert.ok(engine.includes('findReadableRoot(document)'), 'reads must use detected main content');
+});
+
+test('snapshot carries ARIA state and the digest mirrors the interactive subset', async () => {
+  const snapshot = await read('../src/content/snapshot.js');
+  const engine = await read('../src/content/engine.js');
+  assert.ok(snapshot.includes('function ariaState('), 'snapshot must read ARIA state attributes');
+  assert.ok(snapshot.includes('Object.assign(item, ariaState(element))'), 'state must reach every element');
+  assert.ok(engine.includes("element.getAttribute?.(`aria-${attr}`)"), 'the digest must carry the same state subset');
+});
+
 test('the digest scopes to the open dialog, keeps duplicate indices, and carries control state', async () => {
   const engine = await read('../src/content/engine.js');
   assert.ok(engine.includes("scope: dialog ? 'dialog' : undefined"), 'the digest must scope to the open dialog');
@@ -117,4 +154,49 @@ test('wait_for can wait on the digest changing, carrying its baseline across sli
   assert.ok(background.includes("params.state === 'digest-changes'"), 'background must recognize the digest-changes wait');
   assert.ok(background.includes('baseline = outcome.signature'), 'background must carry the baseline to the next slice');
   assert.ok(background.includes('slice.baseline = baseline'), 'background must pass the baseline into each slice');
+});
+
+test('an action that navigated reports success instead of TAB_NOT_ACCESSIBLE', async () => {
+  // A click that navigates destroys the content script mid-call, so the result
+  // comes back empty and callPage used to throw TAB_NOT_ACCESSIBLE even though
+  // the click had landed — which made callers click the same link again. It now
+  // captures the URL before the action and reports a navigation.
+  const background = await read('../src/background.js');
+  assert.ok(background.includes('navigatedSince(urlBefore, tab)'), 'callPage must recognize an action-triggered navigation');
+  assert.ok(background.includes("const urlBefore = ACTION_METHODS.has(method)"), 'the pre-action URL must be captured for actions only');
+  assert.ok(background.includes('navigated: true'), 'a navigation result must be distinguishable from a plain success');
+});
+
+test('browser_image is wired from the router through the page engine and background fetch', async () => {
+  const router = await read('../src/router.js');
+  const background = await read('../src/background.js');
+  const engine = await read('../src/content/engine.js');
+
+  assert.ok(router.includes("'browser_image'"), 'router must allow browser_image as a tab method');
+  assert.ok(background.includes('engine.imageSource(input)'), 'background must dispatch to engine.imageSource');
+  assert.ok(background.includes("'browser_image'"), 'background must route browser_image to the image fetcher');
+  assert.ok(/function imageSource\(input = \{\}\)/.test(engine), 'engine must expose imageSource');
+  assert.ok(engine.includes('imageSource,'), 'engine must publish imageSource on window.__fastMcp');
+  // The bytes are fetched in the background, not the page: a page-side fetch of
+  // a cross-origin image is blocked by CORS.
+  assert.ok(/async function image\(params\)/.test(background), 'background must own the image fetch');
+  assert.ok(background.includes("credentials: 'include'"), 'the image fetch must carry session cookies');
+});
+
+test('drag can scroll ref endpoints into view, and snapshot flags image controls', async () => {
+  const pointer = await read('../src/content/pointer.js');
+  const snapshot = await read('../src/content/snapshot.js');
+  const engine = await read('../src/content/engine.js');
+  const refs = await read('../src/content/refs.js');
+
+  // A drop target below the fold has a viewport y beyond innerHeight, so the
+  // drag must be able to scroll first instead of pressing at a stale coordinate.
+  assert.ok(pointer.includes('scrollIntoView'), 'pointer must be able to scroll an endpoint into view');
+  assert.ok(/input\.scrollIntoView === true/.test(pointer), 'the scroll must be opt-in');
+  // The image hint has to reach both the snapshot and the digest the model reads.
+  assert.ok(snapshot.includes('function imageInfo('), 'snapshot must resolve an element image');
+  assert.ok(engine.includes('discovery.imageInfo(element)'), 'the digest must carry the same image hint');
+  // A post-navigation ref must expire rather than resolve to a stale node.
+  assert.ok(/createReferenceStore\(\(\) => location\.href\)/.test(engine), 'the store must be anchored to the page URL');
+  assert.ok(refs.includes('navigated: true'), 'a URL-change expiry must be distinguishable from a plain stale ref');
 });

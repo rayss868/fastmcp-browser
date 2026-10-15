@@ -106,3 +106,31 @@ test('an unknown ref is never resolved', () => {
   const refs = createReferenceStore();
   assert.throws(() => refs.resolve('e404', refs.revision), error => error.code === 'ELEMENT_NOT_FOUND');
 });
+
+test('a ref expires when the page URL changes under it', () => {
+  // On an SPA the JS world survives a route change, so a node from the previous
+  // view can still be isConnected — resolving it would act on the wrong page.
+  let url = 'https://fixture.test/step-1';
+  const refs = createReferenceStore(() => url);
+  const node = { isConnected: true };
+  const ref = refs.refFor(node, 'e', { role: 'button', name: 'Next' });
+  assert.equal(refs.resolve(ref, refs.revision), node);
+
+  url = 'https://fixture.test/step-2';
+  assert.throws(() => refs.resolve(ref, refs.revision), error => error.code === 'STALE_REF' && error.navigated === true);
+});
+
+test('reset re-anchors the store so refs minted on the new page resolve', () => {
+  // After a navigation the caller re-snapshots (reset), which clears the map and
+  // records the new URL — refs minted from that point must resolve normally, or
+  // the store would be permanently poisoned by the first route change.
+  let url = 'https://fixture.test/a';
+  const refs = createReferenceStore(() => url);
+  refs.refFor({ isConnected: true }, 'e', { role: 'link', name: 'Home' });
+
+  url = 'https://fixture.test/b';
+  refs.reset();
+  const node = { isConnected: true };
+  const fresh = refs.refFor(node, 'e', { role: 'link', name: 'Home' });
+  assert.equal(refs.resolve(fresh, refs.revision), node);
+});

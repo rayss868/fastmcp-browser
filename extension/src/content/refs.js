@@ -1,7 +1,13 @@
-export function createReferenceStore() {
+// `urlOf` is optional so the store stays usable without a document. When given,
+// the store records the URL its refs were minted against and a resolve() from a
+// different URL is rejected: on an SPA (pushState) the JS world survives the
+// navigation, so an old node can still be isConnected while being from the
+// previous view — a ref that silently resolves there acts on the wrong page.
+export function createReferenceStore(urlOf) {
   const refs = new Map();
   const descriptors = new Map();
   let revision = 1;
+  let originUrl = typeof urlOf === 'function' ? urlOf() : null;
 
   return {
     get revision() {
@@ -10,6 +16,7 @@ export function createReferenceStore() {
     reset() {
       refs.clear();
       revision += 1;
+      originUrl = typeof urlOf === 'function' ? urlOf() : null;
       return revision;
     },
     refFor(element, prefix = 'e', descriptor) {
@@ -26,6 +33,12 @@ export function createReferenceStore() {
     },
     resolve(ref, expectedRevision) {
       const element = refs.get(ref);
+      // The document moved on (SPA route change) since these refs were minted, so
+      // even a still-connected node belongs to the view the caller left. Expire
+      // before returning it; the caller re-snapshots on the new page.
+      if (typeof urlOf === 'function' && originUrl != null && urlOf() !== originUrl) {
+        throw Object.assign(new Error('Page navigated; refs from the previous page are no longer valid.'), { code: 'STALE_REF', retryable: true, navigated: true });
+      }
       // Refs are keyed by element identity, so a connected element is still the
       // exact node the caller saw. A page with a live timer (promo countdown,
       // carousel) mutates every second and the revision drifts even though nothing
