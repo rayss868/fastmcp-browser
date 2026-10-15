@@ -150,7 +150,29 @@ async function tabInfo(tabId) {
   }
 }
 
-async function callPage(tabId, method, params, attempt = 0) {
+// Chrome Memory Saver freezes background tabs, and a minimized window keeps
+// every tab in it frozen; injected code then never runs and executeScript
+// comes back empty. Restore the window and bring the tab forward so the page
+// engine is reachable again. Returns why it woke, or null when the tab looked
+// already awake.
+async function wakeTab(tabId) {
+  try {
+    const tab = await api.tabs.get(Number(tabId));
+    if (!tab) return null;
+    const win = await api.windows.get(tab.windowId);
+    const hidden = win.state === 'minimized' || win.state === 'hidden';
+    if (!tab.frozen && !tab.discarded && !hidden) return null;
+    if (hidden) await api.windows.update(tab.windowId, { state: 'normal' });
+    // Activation alone does not thaw a tab inside a hidden window, and a
+    // restored window only renders its active tab — do both.
+    await api.tabs.update(tab.id, { active: true });
+    return hidden ? 'window-restored' : 'tab-activated';
+  } catch {
+    return null;
+  }
+}
+
+async function callPage(tabId, method, params, attempt = 0, woken = false) {
   const frame = splitFrameRef(params?.ref);
   const frameTarget = frame.frameId === null ? {} : { frameIds: [frame.frameId] };
   const effective = frame.frameId === null ? params : { ...params, ref: frame.ref };
@@ -158,8 +180,10 @@ async function callPage(tabId, method, params, attempt = 0) {
   // which surfaces as "no result, no error". Capture the URL first so that case
   // can be told apart from a real crash when the call comes back empty.
   const urlBefore = ACTION_METHODS.has(method) ? (await tabInfo(tabId))?.url ?? null : null;
-  await inject(tabId, frameTarget);
-  const result = await api.scripting.executeScript({
+  let result;
+  try {
+    await inject(tabId, frameTarget);
+    result = await api.scripting.executeScript({
     target: { tabId, ...frameTarget },
     func: (name, input) => {
       const engine = globalThis.__fastMcp;
@@ -195,7 +219,17 @@ async function callPage(tabId, method, params, attempt = 0) {
       throw Object.assign(new Error(`Unsupported page method: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
     },
     args: [method, effective]
-  });
+    });
+  } catch (injectError) {
+    // inject()/executeScript itself threw (frozen or discarded tab rejects the
+    // injection). Wake once and retry; if the tab looked awake, surface the
+    // original error untouched.
+    if (!woken && (await wakeTab(tabId))) {
+      await delay(600);
+      return callPage(tabId, method, params, attempt, true);
+    }
+    throw injectError;
+  }
   const outcome = unwrapInjectionResult(result);
   if (outcome.ok) return redact(outcome.value, tabId);
   if (outcome.error) {
@@ -208,7 +242,7 @@ async function callPage(tabId, method, params, attempt = 0) {
   // observe, so report the unknown state instead of firing twice.
   if (attempt < 1 && !ACTION_METHODS.has(method)) {
     await delay(350);
-    return callPage(tabId, method, params, attempt + 1);
+    return callPage(tabId, method, params, attempt + 1, woken);
   }
   // An action that navigated is a success, not a failure: the click/fill landed
   // and the page is now loading. Reporting TAB_NOT_ACCESSIBLE here made callers
@@ -220,8 +254,19 @@ async function callPage(tabId, method, params, attempt = 0) {
       return { navigated: true, url: tab?.url ?? null, revision: 0, note: `The ${method} navigated the tab; read the new page before acting again.` };
     }
   }
+  // The page never answered. A tab frozen by Memory Saver behaves exactly like
+  // this: warm digest reads still succeed while injected code never runs. Wake
+  // it once (restore the window, activate the tab) and retry; a no-result call
+  // produced no side effect, so retrying an action is safe here.
+  if (!woken) {
+    const why = await wakeTab(tabId);
+    if (why) {
+      await delay(600);
+      return callPage(tabId, method, params, attempt, true);
+    }
+  }
   throw Object.assign(
-    new Error(`Page returned no result for ${method}; the tab may be navigating or crashed. Re-run browser_snapshot for fresh refs, then retry.`),
+    new Error(`Page returned no result for ${method}; the tab may be navigating, frozen by Memory Saver, or crashed. ${woken ? 'The tab was woken but still did not answer — re-run browser_snapshot and retry.' : 'Retry the call; the extension will wake a frozen tab automatically.'}`),
     { code: 'TAB_NOT_ACCESSIBLE', retryable: !ACTION_METHODS.has(method) }
   );
 }

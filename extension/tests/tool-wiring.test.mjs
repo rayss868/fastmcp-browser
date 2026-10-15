@@ -183,6 +183,22 @@ test('browser_image is wired from the router through the page engine and backgro
   assert.ok(background.includes("credentials: 'include'"), 'the image fetch must carry session cookies');
 });
 
+test('a frozen tab is woken once before reporting TAB_NOT_ACCESSIBLE', async () => {
+  // A tab frozen by Memory Saver (or sitting in a minimized window) never runs
+  // injected code, so the result comes back empty while warm digest reads still
+  // succeed. callPage must restore the window / activate the tab and retry once
+  // before giving up — a no-result call produced no side effect, so the retry
+  // is safe even for actions.
+  const background = await read('../src/background.js');
+  assert.ok(background.includes('async function wakeTab('), 'background must own a tab-waking helper');
+  assert.ok(background.includes("win.state === 'minimized'"), 'wake must detect a hidden window');
+  assert.ok(background.includes('tab.frozen'), 'wake must detect a frozen tab');
+  assert.ok(background.includes("{ state: 'normal' }"), 'wake must restore a minimized window');
+  assert.ok(background.includes('return callPage(tabId, method, params, attempt, true)'), 'the no-result path must retry after waking');
+  assert.ok(background.includes('return callPage(tabId, method, params, attempt + 1, woken)'), 'the read retry must preserve the woken flag');
+  assert.ok(background.includes('frozen by Memory Saver'), 'the final error must name the frozen-tab cause');
+});
+
 test('drag can scroll ref endpoints into view, and snapshot flags image controls', async () => {
   const pointer = await read('../src/content/pointer.js');
   const snapshot = await read('../src/content/snapshot.js');
