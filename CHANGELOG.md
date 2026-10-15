@@ -8,7 +8,7 @@ Build archives (Chromium zip, Firefox zip, Firefox xpi) are attached to each
 [GitHub Release](https://github.com/rayss868/fastmcp-browser/releases). This file
 is the source of truth for what changed in each version.
 
-## [Unreleased]
+## [0.6.0] - 2026-10-15
 
 ### Added
 
@@ -54,6 +54,10 @@ is the source of truth for what changed in each version.
   `truncated`, so a caller can tell a cut list from a complete one. Previously a
   60-element list sat next to `elementCount: 394` with nothing to say the rest was
   missing, and a control past the limit looked absent.
+- **`browser_open` reuses tabs and reports the group.** Re-visiting a URL
+  already open in the Automation group returns it with `reused:true` instead of
+  reloading, and the response carries a compact `tabs` summary (id, title, url,
+  active) so the model stops opening duplicates.
 
 ### Changed
 
@@ -72,6 +76,14 @@ is the source of truth for what changed in each version.
   wraps an `<img>` now carries `hasImage: true` and `imageUrl`, so a caller knows
   to read it with `browser_image`. A picture answer choice used to appear as
   `radio "a."` with nothing to distinguish it from a text option.
+- **Container-aware scroll with lazy-load signal.** `browser_scroll` walks up to
+  the nearest scrollable container (window.scrollBy fails on SPA containers),
+  supports ref/selector `scrollIntoView`, and every snapshot/digest/find/scroll
+  carries `pageGeometry` (`scrollY`, `viewportHeight`, `pageHeight`,
+  `belowFold`) so the model sees unrendered content below the fold.
+- **Single source of truth for tool schemas.** Server Zod schemas are generated
+  from the same definitions as the JSON schemas, with a drift-guard test, so a
+  supported format (e.g. markdown) can no longer be rejected at runtime.
 
 ### Fixed
 
@@ -112,6 +124,13 @@ is the source of truth for what changed in each version.
 - **Pointer coordinates are documented as viewport-relative.** The `NUM` schema
   said "Page coordinate in CSS pixels" while the engine treats x/y as relative to
   the viewport and rejects values outside it — two conflicting definitions.
+- **Frozen tabs wake automatically (reactive, then proactive).** A tab frozen by
+  Chrome Memory Saver never runs injected code, so fill/click/type came back
+  empty (`TAB_NOT_ACCESSIBLE`) while warm digest reads still succeeded.
+  `callPage` now restores a minimized window, activates the tab, polls
+  `waitForThaw()` until `frozen` clears, and retries internally — actions wake
+  proactively before injecting, so one AI turn suffices instead of
+  fail-then-manual-retry.
 
 ## [0.5.0] - 2026-10-13
 
@@ -374,7 +393,8 @@ is the source of truth for what changed in each version.
   added.
 - **0.1.0** (2026-09-23) — first release.
 
-[Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.6.0
 [0.5.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.5.0
 [0.4.9]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.4.9
 [0.4.8]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.4.8

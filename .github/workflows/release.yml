@@ -33,17 +33,16 @@ jobs:
           body: |
             WebExtension builds of FastMCP Browser — the MCP bridge that drives Chrome/Firefox over a loopback WebSocket (34 MCP browser tools).
 
-            ### What's new in v0.5.0
+            ### What's new in v0.6.0
 
-            - **Read a page as text.** `browser_snapshot` accepts `format:"text"` to return the rendered text of the page main region (innerText) in one small payload, so an agent reads a text-heavy page directly instead of paying for a screenshot. `format:"digest"` also accepts `includeText:true`, and `maxChars` caps the length.
-            - **Read a long text block in place.** `browser_snapshot` accepts `maxNameChars` to raise the per-element name cap for one call (default 160), so a page whose whole body sits in one block element (`main`, `article`) is no longer truncated in `compact`.
-            - **Screenshot is scoped to non-DOM content.** Its description now steers the model to use it only for canvas, WebGL, image, or PDF content, and to read ordinary text pages with `format:"text"`.
-            - **`browser_wait_for` state `digest-changes`.** Resolves when the AI-readable control digest changes, so an agent waits on state instead of a fixed sleep or a raw DOM settle.
-            - **Workflow recording and replay.** Any session driven through the MCP server can be recorded to a `.jsonl` run file (`FASTMCP_RECORD`) and replayed later through the bridge with no AI client (`cli replay`); `cli export --script` turns a run file into a runnable `.mjs`.
-            - **Label-wrapped controls are visible again.** A `<label>` that wraps or points to a visually-hidden `<input>` (DaisyUI radio tabs, custom checkboxes) is reported with the input's role and the label's text, so it appears in a snapshot and the digest and gets a ref.
-            - **`browser_evaluate` is a gated last resort.** It now requires a `fallback` reason and is refused until the tab has been read through the extension.
-            - **Refs survive long-lived pages**, and `browser_inspect` with a `path` no longer floods the context with React props.
-            - **Content redaction for prompt-injection defense.** User-configurable rules filter what the AI reads from a page, configured from the extension options page.
+            - **Read a page as markdown / text / aria / delta.** `browser_snapshot` accepts `format:"markdown"` (structured main-content markdown, ~80% fewer tokens), `format:"text"`, `format:"aria"` (hierarchical tree), and `delta:true` (only what changed since the last snapshot).
+            - **Main-content detection, heading outline, untrusted boundaries.** Text/markdown reads score candidate blocks Readability-style, include an h1–h6 outline, and wrap page text in per-call random markers so models separate data from instructions.
+            - **`browser_image` reads pictures, not names.** Pass `url` or an `<img>` ref/selector; bytes come back as an MCP image block with session cookies, so picture choices, diagrams, and charts are visible to the model.
+            - **Digest truncation signal + content ranking.** Digest reports `shown`/`elementCount`/`truncated`, ranks main content above nav/sidebar chrome, and image controls carry `hasImage`/`imageUrl`.
+            - **`browser_open` reuses tabs and reports the group.** Re-visiting an open URL returns it with `reused:true` plus a compact `tabs` summary, so agents stop opening duplicates.
+            - **Frozen tabs wake automatically.** `callPage` restores minimized windows, polls `waitForThaw()` until `frozen` clears, and retries internally — actions wake proactively, so one AI turn suffices.
+            - **Container-aware scroll + lazy-load signal.** Scroll walks to the nearest scrollable container, supports ref/selector `scrollIntoView`, and every read carries `pageGeometry` (`belowFold`).
+            - **Single schema source of truth.** Server Zod schemas derive from the JSON definitions with a drift-guard test; drag accepts ref endpoints/`steps`/`stealth`/`scrollIntoView`; `navigated:true` replaces false `TAB_NOT_ACCESSIBLE` on navigation; SPA route changes expire refs (`STALE_REF`); `browser_act` returns verifiable `target` + `form`.
 
             ### Install
 
