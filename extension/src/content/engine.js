@@ -1,5 +1,6 @@
 import { createReferenceStore, boundingBox, recoverRef } from './refs.js';
 import { createDomSemantics, deepQueryAll, sanitizeText } from './semantics.js';
+import { findReadableRoot, toMarkdown, headingOutline, wrapUntrusted, contentMarker } from './readable.js';
 import { createSnapshotEngine } from './snapshot.js';
 import { createPointerController } from './pointer.js';
 import { createStealthLayer, createActionability } from './stealth.js';
@@ -11,7 +12,7 @@ import { computeDiff, shouldRefresh } from './diff.js';
 // surface from a previous injection so a ref from an earlier snapshot stays
 // resolvable within the same document; only a real navigation starts fresh.
 const surface = globalThis.__fastMcp;
-const refs = surface?.state?.refs ?? createReferenceStore();
+const refs = surface?.state?.refs ?? createReferenceStore(() => location.href);
 const semantics = createDomSemantics(document, window);
 const discovery = createSnapshotEngine({
   documentRef: document,
@@ -24,6 +25,7 @@ const state = surface?.state ?? {
   refs,
   recovered: false,
   lastCatalog: null,
+  lastSnapshotItems: null,
   lastDigest: null,
   lastDigestLimit: null,
   lastDigestSignature: null,
@@ -49,6 +51,10 @@ function locate(ref, revision) {
     return { element: refs.resolve(ref, revision), recovered: false };
   } catch (error) {
     if (error?.code !== 'STALE_REF' && error?.code !== 'ELEMENT_NOT_FOUND') throw error;
+    // A navigation expiry is not a rerender: the page is different now, so
+    // matching role+name on the new DOM would resolve to a lookalike on the
+    // wrong view. Surface it instead and make the caller re-snapshot.
+    if (error.navigated === true) throw error;
     const descriptor = refs.descriptorFor(ref);
     if (!descriptor) throw error;
     // React/MUI rerenders replace the node; match the equivalent role+name again.
@@ -123,6 +129,104 @@ function box(element) {
   return boundingBox(element);
 }
 
+// The URL behind an element the caller pointed at, so the bytes can be fetched
+// and handed to the model as an actual image. An <img> is the obvious case, but
+// a picture choice is often a <label>/<button> wrapping the image, or an
+// <input type="image">, so walk down to the first descendant with a usable
+// source instead of demanding the exact <img> node.
+function imageSource(input = {}) {
+  const element = targetOf(input);
+  const isImage = node => node instanceof HTMLImageElement || node?.tagName?.toLowerCase() === 'img';
+  const pick = node => {
+    if (!node) return null;
+    if (isImage(node)) return node;
+    if (typeof node.querySelector === 'function') {
+      const nested = node.querySelector('img, picture img, [style*="background-image"]');
+      if (nested) return nested;
+    }
+    return node;
+  };
+  const node = pick(element);
+  let url = null;
+  if (node) {
+    if (isImage(node)) url = node.currentSrc || node.src || null;
+    if (!url && typeof node.getAttribute === 'function') {
+      url = node.getAttribute('src') || node.getAttribute('data-src') || node.getAttribute('poster') || null;
+    }
+    if (!url && node.style?.backgroundImage) {
+      const match = /url\((['"]?)(.*?)\1\)/.exec(node.style.backgroundImage);
+      if (match) url = match[2];
+    }
+  }
+  if (!url) {
+    throw Object.assign(new Error('No image source found on the target element.'), { code: 'ELEMENT_NOT_FOUND', retryable: false });
+  }
+  // A relative src must become absolute before the background script fetches it.
+  let absolute = url;
+  try { absolute = new URL(url, location.href).href; } catch { absolute = url; }
+  const rect = element.getBoundingClientRect?.() ?? {};
+  return {
+    url: absolute,
+    alt: isImage(element) ? (element.alt ?? '') : (semantics.name(element) ?? ''),
+    width: Math.round(rect.width ?? 0),
+    height: Math.round(rect.height ?? 0),
+    naturalWidth: isImage(node) ? (node.naturalWidth ?? 0) : 0,
+    naturalHeight: isImage(node) ? (node.naturalHeight ?? 0) : 0,
+    page: location.href
+  };
+}
+
+// The acted-on element's own value, read straight from the node. The catalog
+// diff cannot answer "did my answer land?" when the value lives in a hidden
+// input (Moodle's drag-and-drop writes q…_c1/q…_p1, which never enters the
+// visible candidate list), so an action reports the target's state directly
+// instead of leaving changed:true as the only signal.
+function targetState(element) {
+  if (!element || typeof element.tagName !== 'string') return null;
+  const tag = element.tagName.toLowerCase();
+  const role = semantics.role(element);
+  const entry = {
+    ref: element.isConnected ? refs.refFor(element, 'e', { role, name: semantics.name(element) }) : null,
+    role,
+    name: semantics.name(element)
+  };
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+    const type = tag === 'input' ? String(element.type || '').toLowerCase() : tag;
+    if (type === 'password') entry.value = '[REDACTED]';
+    else if (element.value !== undefined) entry.value = element.value;
+    if (tag === 'input' && (type === 'checkbox' || type === 'radio')) entry.checked = Boolean(element.checked);
+    if (element.disabled) entry.disabled = true;
+  }
+  return entry;
+}
+
+// Named fields of the enclosing form, hidden inputs included. This is what makes
+// a drag answer verifiable: the visible control barely changes, but the hidden
+// coordinate/index input the widget writes is the real answer. Capped and
+// value-filtered so a large form does not flood the response.
+function formState(element) {
+  const form = typeof element.closest === 'function' ? element.closest('form') : null;
+  if (!form || typeof form.querySelectorAll !== 'function') return null;
+  const fields = {};
+  let count = 0;
+  for (const field of form.querySelectorAll('input, textarea, select')) {
+    if (count >= 40) break;
+    const name = field.getAttribute?.('name');
+    if (!name) continue;
+    const type = String(field.getAttribute?.('type') || '').toLowerCase();
+    if (type === 'password') { fields[name] = '[REDACTED]'; count += 1; continue; }
+    if (type === 'checkbox' || type === 'radio') {
+      if (field.checked) { fields[name] = field.value ?? 'on'; count += 1; }
+      continue;
+    }
+    const value = field.value ?? '';
+    if (value === '') continue;
+    fields[name] = value;
+    count += 1;
+  }
+  return Object.keys(fields).length ? fields : null;
+}
+
 function refreshCatalog() {
   const after = discovery.catalogEntries({ limit: 400 });
   const before = state.lastCatalog;
@@ -158,42 +262,67 @@ function dialogRoot() {
 const MAX_PAGE_TEXT_CHARS = 20000;
 const MAX_PAGE_TEXT_LINES = 2000;
 
-function pageText(options = {}) {
-  const root = document.querySelector('main') ?? document.body;
-  if (!root) return '';
-  // innerText is the rendered text — it drops display:none content and hidden
-  // nav that textContent would include, so it matches what the page shows.
-  const raw = typeof root.innerText === 'string' ? root.innerText : (root.textContent ?? '');
-  const collapsed = String(raw).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  // `|| default` would drop a small maxChars (20 is falsy-safe but any value the
-  // caller set must win); only fall back when the option is absent or not a number.
-  const requested = Number(options.maxChars);
-  const maxChars = Math.max(200, Math.min(Number.isFinite(requested) ? requested : MAX_PAGE_TEXT_CHARS, 100000));
+function clampChars(value) {
+  const requested = Number(value);
+  return Math.max(200, Math.min(Number.isFinite(requested) ? requested : MAX_PAGE_TEXT_CHARS, 100000));
+}
+
+function boundedText(collapsed, maxChars) {
   const lines = collapsed.split('\n');
   const truncatedByLines = lines.length > MAX_PAGE_TEXT_LINES;
   let text = truncatedByLines ? lines.slice(0, MAX_PAGE_TEXT_LINES).join('\n') : collapsed;
   const truncatedByChars = text.length > maxChars;
   if (truncatedByChars) text = text.slice(0, maxChars);
-  return {
-    text,
-    truncated: truncatedByLines || truncatedByChars,
-    charCount: collapsed.length
-  };
+  return { text, truncated: truncatedByLines || truncatedByChars, charCount: collapsed.length };
 }
 
-// The text read the agent should reach for instead of a screenshot: a small
-// payload with the rendered text of the main region. On-demand, so it costs
-// nothing until it is asked for — unlike the warm digest, which must stay cheap.
-function textSnapshot(options = {}) {
-  const result = pageText(options);
+// The text read the agent should reach for instead of a screenshot. The root is
+// the detected main content (Readability-style), not a bare <main>/<body>, so a
+// page without a <main> does not come back as its nav and footer.
+function pageText(options = {}) {
+  const root = findReadableRoot(document) ?? document.body;
+  if (!root) return { text: '', truncated: false, charCount: 0 };
+  // innerText is the rendered text — it drops display:none content and hidden
+  // nav that textContent would include, so it matches what the page shows.
+  const raw = typeof root.innerText === 'string' ? root.innerText : (root.textContent ?? '');
+  const collapsed = String(raw).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return boundedText(collapsed, clampChars(options.maxChars));
+}
+
+// Structured markdown of the main content: headings, lists, links, and tables
+// survive, so the model reads the page's shape. Cheaper than a screenshot and
+// far more useful than a flat text blob.
+function pageMarkdown(options = {}) {
+  const root = findReadableRoot(document) ?? document.body;
+  const markdown = root ? toMarkdown(root) : '';
+  return boundedText(markdown, clampChars(options.maxChars));
+}
+
+// Shared shape for the text and markdown reads: outline for orientation, an
+// untrusted-content boundary around the body, and truncation metadata.
+function readSnapshot(options = {}, body, kind) {
+  const root = findReadableRoot(document) ?? document.body;
+  const outline = options.outline === false || !root ? [] : headingOutline(root, { limit: Number(options.outlineLimit) || 50 });
+  const marker = contentMarker();
   return {
     url: location.href,
     title: document.title,
     revision: refs.revision,
-    text: result.text,
-    charCount: result.charCount,
-    truncated: result.truncated
+    format: kind,
+    outline,
+    text: wrapUntrusted(body.text, marker),
+    marker,
+    charCount: body.charCount,
+    truncated: body.truncated
   };
+}
+
+function textSnapshot(options = {}) {
+  return readSnapshot(options, pageText(options), 'text');
+}
+
+function markdownSnapshot(options = {}) {
+  return readSnapshot(options, pageMarkdown(options), 'markdown');
 }
 
 function digestDialog(dialog) {
@@ -247,14 +376,31 @@ function buildDigest(input = {}) {
     } else if (tag === 'button' || tag === 'select' || tag === 'textarea') {
       if (element.disabled) entry.disabled = true;
     }
+    // Same ARIA state the full snapshot carries, so a digest-only caller learns
+    // whether a menu is open or a toggle is pressed without an extra snapshot.
+    for (const attr of ['expanded', 'pressed', 'selected', 'invalid', 'current', 'haspopup']) {
+      const value = element.getAttribute?.(`aria-${attr}`);
+      if (value != null && value !== '' && value !== 'false') entry[attr] = value;
+    }
+    // Tell a picture choice apart from a plain one: without this the digest shows
+    // radio "a." and "b." with no way to know an image decides the answer.
+    const image = discovery.imageInfo(element);
+    if (image) Object.assign(entry, image);
     elements.push(entry);
   }
+  // `elementCount` is how many controls exist; `shown` how many fit under the
+  // limit. Without this the caller saw a 60-element list next to elementCount
+  // 394 and had no way to know the list was cut — so a button past the limit
+  // looked absent and the model fell back to browser_evaluate to hunt for it.
   return {
     url: location.href,
     title: document.title,
     dialog: digestDialog(dialog),
     revision: refs.revision,
     elementCount: total,
+    shown: elements.length,
+    truncated: total > elements.length,
+    geometry: pageGeometry(),
     elements
   };
 }
@@ -294,14 +440,14 @@ function digest(input = {}) {
   const reusable = warm && !ranked && warm.revision === refs.revision
     && state.lastDigestLimit === limit && Date.now() - state.digestAt < 3000
     && state.digestInvalidated !== true;
-  if (reusable) return wantText ? { ...warm, ...pageText(input) } : warm;
+  if (reusable) return wantText ? { ...warm, ...textSnapshot(input) } : warm;
   const result = buildDigest({ limit, goal: input.goal, keywords: input.keywords, relevantOnly: input.relevantOnly });
   state.lastDigest = result;
   state.lastDigestLimit = limit;
   state.lastDigestSignature = digestSignature(result);
   state.digestInvalidated = false;
   state.digestAt = Date.now();
-  return wantText ? { ...result, ...pageText(input) } : result;
+  return wantText ? { ...result, ...textSnapshot(input) } : result;
 }
 
 // Recomputed after a mutation burst, but only once a caller has actually asked
@@ -347,15 +493,21 @@ function snapshot(input = {}) {
   // baseline so the next action diff is not the whole page.
   if (input.format === 'text') {
     state.lastCatalog = discovery.catalogEntries({ limit: 400 });
-    return textSnapshot(input);
+    return { ...textSnapshot(input), geometry: pageGeometry() };
+  }
+  // `format: 'markdown'` is the structured read: headings, lists, links, and
+  // tables survive, so the model sees the page's shape rather than a text blob.
+  if (input.format === 'markdown') {
+    state.lastCatalog = discovery.catalogEntries({ limit: 400 });
+    return { ...markdownSnapshot(input), geometry: pageGeometry() };
   }
   // `format: 'digest'` returns the warm AI-readable digest (interactive controls
   // with refs plus value/checked/disabled state) instead of the element list.
   if (input.format === 'digest') return digest(input);
   const result = discovery.snapshot(input);
-  // Compact format returns { text, elementCount } without an `elements` array;
-  // the old unconditional .map() crashed every compact snapshot (masked by
-  // callPage as "navigating or crashed" — the Azure-portal failures). Keep a
+  // Compact/aria formats return { text, elementCount } without an `elements`
+  // array; the old unconditional .map() crashed every compact snapshot (masked
+  // by callPage as "navigating or crashed" — the Azure-portal failures). Keep a
   // real baseline in that case: an empty baseline made the next diff report the
   // whole page as freshly added.
   state.lastCatalog = result.elements
@@ -363,6 +515,22 @@ function snapshot(input = {}) {
         item.value === undefined ? { role: item.role, name: item.name } : { role: item.role, name: item.name, value: item.value }
       ))
     : discovery.catalogEntries({ limit: 400 });
+  // `delta: true` returns only what changed since the previous snapshot on this
+  // page, so a polling agent pays for the change, not the whole tree. The full
+  // observation is still kept in state so the next delta has a baseline.
+  if (input.delta === true) {
+    const before = state.lastSnapshotItems;
+    state.lastSnapshotItems = state.lastCatalog;
+    if (before) {
+      const diff = computeDiff(before, state.lastCatalog, refs);
+      const changed = diff.added.length + diff.removed.length + diff.changed.length > 0;
+      return { url: location.href, title: document.title, revision: state.revision, delta: true, ...diff, changed };
+    }
+    result.deltaBaseline = true;
+  } else {
+    state.lastSnapshotItems = state.lastCatalog;
+  }
+  result.geometry = pageGeometry();
   // Few elements in top frame + iframes present → the UI likely renders inside
   // an iframe; tell the caller to retry with frames: true instead of leaving
   // them with a near-empty tree and no explanation.
@@ -756,7 +924,13 @@ async function act(input = {}) {
   }
 
   const result = { changed, action, revision: state.revision, ref: nextRef, diff };
-  if (detail !== null) result.value = detail;
+  // Read the target back so the caller can verify the action actually landed:
+  // the catalog diff cannot see a hidden input, so changed:true alone left the
+  // model unable to confirm an answer was recorded.
+  const readback = targetState(element);
+  if (readback) result.target = readback;
+  const form = formState(element);
+  if (form) result.form = form;  if (detail !== null) result.value = detail;
   if (settled) result.settled = settled.satisfied;
   if (state.recovered) { result.recovered = true; state.recovered = false; }
   if (refreshed) result.snapshot = refreshed;
@@ -765,13 +939,90 @@ async function act(input = {}) {
 }
 
 function screenshotTarget(input = {}) { const element = input.ref || input.selector ? targetOf(input) : document.documentElement; return { boundingBox: box(element), url: location.href, title: document.title }; }
-function scroll(input) {
+
+// Where the page sits in its scroll range, cheap enough to attach to every
+// read. belowFold is the lazy-load signal: the model learns content still
+// exists past the viewport instead of assuming the snapshot showed everything.
+function pageGeometry() {
+  const root = document.documentElement;
+  const scrollY = Number(window.scrollY) || 0;
+  const viewportHeight = Number(window.innerHeight) || 0;
+  const pageHeight = Math.max(Number(root?.scrollHeight) || 0, Number(document.body?.scrollHeight) || 0);
+  return { scrollY, viewportHeight, pageHeight, belowFold: pageHeight > scrollY + viewportHeight + 1 };
+}
+
+function isScrollable(node) {
+  if (!node || node === document.documentElement || node === document.body) return false;
+  const style = window.getComputedStyle?.(node);
+  if (!style) return false;
+  if (!/auto|scroll/.test(`${style.overflowY ?? ''} ${style.overflowX ?? ''}`)) return false;
+  return (Number(node.scrollHeight) || 0) > (Number(node.clientHeight) || 0) + 1
+    || (Number(node.scrollWidth) || 0) > (Number(node.clientWidth) || 0) + 1;
+}
+
+// SPA pages like LinkedIn scroll inside a container, not the window, so
+// window.scrollBy silently no-ops. Walk up from the focused element or the
+// viewport center to find the element that actually can scroll.
+function findScrollable() {
+  for (const start of [document.activeElement, document.elementFromPoint?.(Math.floor((Number(window.innerWidth) || 0) / 2), Math.floor((Number(window.innerHeight) || 0) / 2)) ?? null]) {
+    let node = start;
+    while (node) {
+      if (isScrollable(node)) return node;
+      node = node.parentElement;
+    }
+  }
+  let best = null;
+  let bestArea = 0;
+  for (const candidate of document.querySelectorAll('div, section, main')) {
+    if (!isScrollable(candidate)) continue;
+    const area = (Number(candidate.clientHeight) || 0) * (Number(candidate.clientWidth) || 0);
+    if (area > bestArea) { best = candidate; bestArea = area; }
+  }
+  return best;
+}
+
+function scroll(input = {}) {
   if (input.stealth) {
     return stealthLayer.humanScroll.scroll(null, input.y ?? 0, input.x ?? 0)
-      .then(() => ({ x: window.scrollX, y: window.scrollY, revision: state.revision, stealth: true }));
+      .then(() => ({ x: window.scrollX, y: window.scrollY, moved: true, revision: state.revision, stealth: true, geometry: pageGeometry() }));
   }
-  window.scrollBy(input.x ?? 0, input.y ?? 0);
-  return { x: window.scrollX, y: window.scrollY, revision: state.revision };
+  const target = input.ref || input.selector ? targetOf(input) : null;
+  if (target) {
+    const beforeX = window.scrollX;
+    const beforeY = window.scrollY;
+    target.scrollIntoView?.({ block: input.intoView === false ? 'nearest' : 'center' });
+    const moved = window.scrollX !== beforeX || window.scrollY !== beforeY;
+    const result = { x: window.scrollX, y: window.scrollY, moved, geometry: pageGeometry(), revision: state.revision };
+    if (!moved) result.hint = 'scrollIntoView did not move the window; the element may already be visible inside a scrollable container.';
+    return result;
+  }
+  const dx = Number(input.x) || 0;
+  const dy = Number(input.y) || 0;
+  const beforeX = window.scrollX;
+  const beforeY = window.scrollY;
+  window.scrollBy?.(dx, dy);
+  let moved = window.scrollX !== beforeX || window.scrollY !== beforeY;
+  let container = false;
+  let hint = null;
+  if (!moved && (dx !== 0 || dy !== 0)) {
+    const scroller = findScrollable();
+    if (scroller) {
+      const scrollerBeforeX = scroller.scrollLeft;
+      const scrollerBeforeY = scroller.scrollTop;
+      scroller.scrollBy?.(dx, dy);
+      moved = scroller.scrollLeft !== scrollerBeforeX || scroller.scrollTop !== scrollerBeforeY;
+      container = true;
+      hint = moved
+        ? 'The window did not scroll; the page scrolls inside a container, which was scrolled instead.'
+        : 'Neither the window nor the nearest scrollable container moved; the scroll range is likely already at its edge.';
+    } else {
+      hint = 'The window did not scroll and no scrollable container was found; the visible content may already be complete, or the scrollable area lives in an iframe.';
+    }
+  }
+  const result = { x: window.scrollX, y: window.scrollY, moved, geometry: pageGeometry(), revision: state.revision };
+  if (container) result.container = true;
+  if (hint) result.hint = hint;
+  return result;
 }
 function pointer(input) {
   if (input.type === 'pointermove') return pointerController.move(input);
@@ -796,7 +1047,7 @@ function upload(input = {}, files) {
 }
 
 function find(input = {}) {
-  return discovery.find(input);
+  return { ...discovery.find(input), geometry: pageGeometry() };
 }
 
 function network(input = {}) {
@@ -804,7 +1055,7 @@ function network(input = {}) {
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, imageSource, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => {

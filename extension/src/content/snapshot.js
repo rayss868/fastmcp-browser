@@ -1,10 +1,29 @@
 import { boundingBox } from './refs.js';
+import { isChromeElement } from './readable.js';
 
 const MAX_RESPONSE_BYTES = 1000000;
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'combobox', 'checkbox', 'radio', 'switch',
   'tab', 'option', 'menuitem', 'searchbox', 'slider', 'spinbutton'
 ]);
+
+// ARIA states a model needs to understand a widget without clicking it first.
+// Playwright's aria snapshot carries the same set as [attr=value] on each node;
+// without them an agent has to probe a control to learn whether it is open,
+// pressed, or selected — exactly the round-trips a snapshot exists to save.
+const STATE_ATTRS = ['expanded', 'pressed', 'selected', 'checked', 'disabled', 'invalid', 'required', 'current', 'level', 'valuemin', 'valuemax', 'valuenow', 'valuetext', 'live', 'orientation', 'haspopup'];
+
+function ariaState(element) {
+  const state = {};
+  for (const attr of STATE_ATTRS) {
+    let value = null;
+    try {
+      value = element.getAttribute?.(`aria-${attr}`);
+    } catch { value = null; }
+    if (value != null && value !== '' && value !== 'false') state[attr] = value;
+  }
+  return state;
+}
 
 function bounded(result) {
   const serialized = JSON.stringify(result);
@@ -86,6 +105,19 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     };
   }
 
+  // With no goal to rank against, DOM order puts the header and sidebar first,
+  // so a `limit` truncates away the main-content controls the caller wants and
+  // it falls back to browser_evaluate to hunt for them. Keep content order but
+  // move chrome after it; a stable partition, so equal controls keep DOM order.
+  function demoteChrome(elements) {
+    const content = [];
+    const chrome = [];
+    for (const element of elements) {
+      (isChromeElement(element) ? chrome : content).push(element);
+    }
+    return content.concat(chrome);
+  }
+
   function orderedCandidates(options) {
     const elements = [];
     for (const element of semantics.candidates()) {
@@ -93,7 +125,7 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
       elements.push(element);
     }
     const score = relevanceScorer(options);
-    if (!score) return elements;
+    if (!score) return demoteChrome(elements);
     let scored = elements.map(element => ({ element, score: score(element) }));
     if (options.relevantOnly) {
       const kept = scored.filter(entry => entry.score > 0);
@@ -104,51 +136,123 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     return scored.map(entry => entry.element);
   }
 
+  // A picture choice (Moodle ddimageortext, Google Forms image answers) is a
+  // control whose label is just "a." — the pixels carry the answer, and a name
+  // alone cannot tell two options apart. Flag it so the caller knows to call
+  // browser_image instead of guessing. An <img> is the direct case; a radio is
+  // usually a <label> wrapping the image, so descend for interactive roles only
+  // (a blanket querySelector on every candidate would cost on a long page).
+  function imageInfo(element) {
+    const tag = element.tagName.toLowerCase();
+    let node = tag === 'img' ? element : null;
+    if (!node && (INTERACTIVE_ROLES.has(semantics.role(element)) || tag === 'label') && typeof element.querySelector === 'function') {
+      node = element.querySelector('img');
+    }
+    if (!node) return null;
+    const raw = node.currentSrc || node.src || node.getAttribute?.('src') || null;
+    if (!raw) return { hasImage: true };
+    let url = raw;
+    try { url = new URL(raw, windowRef.location.href).href; } catch { url = raw; }
+    return { hasImage: true, imageUrl: url };
+  }
+
+  // Descriptor for one element, shared by every format so a state attribute
+  // added here reaches compact, JSON, and aria output at once.
+  function describe(element, options, seenCounts) {
+    const tag = element.tagName.toLowerCase();
+    const role = semantics.role(element);
+    const name = semantics.name(element, options.nameLimit);
+    // Position among earlier candidates with the same role+name lets a stale
+    // ref recover to the right duplicate (e.g. which Likert radio "4") instead
+    // of always landing on the first match.
+    const index = seenCounts.get(`${role}|${name}`) ?? 0;
+    seenCounts.set(`${role}|${name}`, index + 1);
+    const item = {
+      ref: refs.refFor(element, 'e', { role, name, index }),
+      role,
+      name,
+      visible: true,
+      tag
+    };
+    const isInput = element instanceof windowRef.HTMLInputElement || tag === 'input';
+    const isButton = element instanceof windowRef.HTMLButtonElement || tag === 'button';
+    if (isInput) {
+      item.type = element.type;
+      item.required = element.required;
+      item.disabled = element.disabled;
+      item.checked = element.checked;
+      item.value = element.type === 'password' ? '[REDACTED]' : element.value;
+    } else if (isButton) item.disabled = element.disabled;
+    Object.assign(item, ariaState(element));
+    const image = imageInfo(element);
+    if (image) Object.assign(item, image);
+    if (options.boundingBox) item.boundingBox = boundingBox(element);
+    return { item, element };
+  }
+
+  function collect(options) {
+    const limit = Number(options.limit) || 0;
+    const nameLimit = Number(options.maxNameChars) > 0 ? Number(options.maxNameChars) : undefined;
+    const seenCounts = new Map();
+    const entries = [];
+    for (const element of orderedCandidates(options)) {
+      entries.push(describe(element, { ...options, nameLimit }, seenCounts));
+      if (limit > 0 && entries.length >= limit) break;
+    }
+    return entries;
+  }
+
+  // Nest candidates under their nearest candidate ancestor so the model sees
+  // grouping (which button is inside which dialog) instead of a flat list. A
+  // child with no candidate ancestor is a root. Nodes carry the item plus the
+  // element (needed for containment) and any children.
+  function buildTree(entries) {
+    const nodes = entries.map(entry => ({ item: entry.item, element: entry.element, children: [] }));
+    const roots = [];
+    for (let index = 0; index < nodes.length; index += 1) {
+      const node = nodes[index];
+      let parent = null;
+      for (let other = index - 1; other >= 0; other -= 1) {
+        if (contains(nodes[other].element, node.element)) { parent = nodes[other]; break; }
+      }
+      if (parent) parent.children.push(node);
+      else roots.push(node);
+    }
+    return roots;
+  }
+
+  function ariaLine(item, depth) {
+    const pieces = [`${'  '.repeat(depth)}- ${item.role}`];
+    if (item.name) pieces.push(`"${item.name}"`);
+    const attrs = [];
+    for (const [key, value] of Object.entries(item)) {
+      if (['ref', 'role', 'name', 'visible', 'tag', 'type'].includes(key)) continue;
+      if (value === undefined || value === null || value === '' || value === false) continue;
+      attrs.push(`${key}=${value}`);
+    }
+    if (item.ref) attrs.push(`ref=${item.ref}`);
+    if (attrs.length) pieces.push(`[${attrs.join(' ')}]`);
+    return pieces.join(' ');
+  }
+
+  function renderTree(nodes, depth = 0) {
+    const lines = [];
+    for (const node of nodes) {
+      lines.push(ariaLine(node.item, depth));
+      if (node.children.length) lines.push(...renderTree(node.children, depth + 1));
+    }
+    return lines;
+  }
+
   function snapshot(options = {}) {
     // keepRefs lets an action attach a post-action snapshot without invalidating
     // every ref the caller already holds; a plain browser_snapshot still resets.
     if (!options.keepRefs) refs.reset();
-    const limit = Number(options.limit) || 0;
-    // A text-heavy page puts its whole body inside one block element (main,
-    // article), so the default 160-char name cap truncated it in every format.
-    // maxNameChars raises that cap for this call; the default stays 160 so no
-    // other snapshot grows.
-    const nameLimit = Number(options.maxNameChars) > 0 ? Number(options.maxNameChars) : undefined;
-    const elements = [];
-    const seenCounts = new Map();
-    for (const element of orderedCandidates(options)) {
-      const tag = element.tagName.toLowerCase();
-      const role = semantics.role(element);
-      const name = semantics.name(element, nameLimit);
-      // Position among earlier candidates with the same role+name lets a stale
-      // ref recover to the right duplicate (e.g. which Likert radio "4") instead
-      // of always landing on the first match.
-      const index = seenCounts.get(`${role}|${name}`) ?? 0;
-      seenCounts.set(`${role}|${name}`, index + 1);
-      const item = {
-        ref: refs.refFor(element, 'e', { role, name, index }),
-        role,
-        name,
-        visible: true,
-        tag
-      };
-      const isInput = element instanceof windowRef.HTMLInputElement || tag === 'input';
-      const isButton = element instanceof windowRef.HTMLButtonElement || tag === 'button';
-      if (isInput) {
-        item.type = element.type;
-        item.required = element.required;
-        item.disabled = element.disabled;
-        item.checked = element.checked;
-        item.value = element.type === 'password' ? '[REDACTED]' : element.value;
-      } else if (isButton) item.disabled = element.disabled;
-      if (options.boundingBox) item.boundingBox = boundingBox(element);
-      elements.push(item);
-      if (limit > 0 && elements.length >= limit) break;
-    }
+    const entries = collect(options);
     if (options.format === 'compact') {
       // One line per element carries the same data with far fewer tokens than a
       // JSON object array; the model can read `role "name" [ref=eN]` directly.
-      const lines = elements.map(item => {
+      const lines = entries.map(({ item }) => {
         const pieces = [`- ${item.role} "${item.name}" [ref=${item.ref}]`];
         if (item.value !== undefined && item.value !== '') pieces.push(`value="${item.value}"`);
         return pieces.join(' ');
@@ -158,8 +262,21 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
         url: windowRef.location.href,
         title: documentRef.title,
         revision: refs.revision,
-        elementCount: elements.length,
+        elementCount: entries.length,
         text: lines.join('\n')
+      });
+    }
+    if (options.format === 'aria') {
+      // Hierarchical YAML-style tree, the shape Playwright and Chrome DevTools
+      // use: indentation encodes nesting, so structure is readable at a glance.
+      const tree = buildTree(entries);
+      return bounded({
+        tabId: null,
+        url: windowRef.location.href,
+        title: documentRef.title,
+        revision: refs.revision,
+        elementCount: entries.length,
+        text: renderTree(tree).join('\n')
       });
     }
     return bounded({
@@ -167,7 +284,7 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
       url: windowRef.location.href,
       title: documentRef.title,
       revision: refs.revision,
-      elements
+      elements: entries.map(entry => entry.item)
     });
   }
 
@@ -198,8 +315,11 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     let node = element.parentElement;
     while (node && parts.length < depth) {
       const role = semantics.role(node);
-      const name = semantics.name(node);
-      parts.unshift(name ? `${role} "${name}"` : role);
+      // LinkedIn wraps cards in several ancestors with the identical role+name;
+      // repeating the full label four times only burned tokens.
+      const name = semantics.name(node).slice(0, 40);
+      const segment = name ? `${role} "${name}"` : role;
+      if (parts[0] !== segment) parts.unshift(segment);
       node = node.parentElement;
     }
     return parts.join(' > ');
@@ -297,5 +417,5 @@ export function createSnapshotEngine({ documentRef, refs, semantics, windowRef }
     });
   }
 
-  return { snapshot, inventory, catalog, catalogEntries, find };
+  return { snapshot, inventory, catalog, catalogEntries, find, imageInfo };
 }

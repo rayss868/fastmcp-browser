@@ -100,8 +100,10 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
 
       const outcome = results?.[0]?.result;
       if (outcome && typeof outcome === 'object' && outcome.__fastmcpEvalBlocked) {
+        // The full CSP directive list runs to thousands of characters and tells
+        // the model nothing; the fix is the text read that needs no eval.
         throw evaluationError(
-          `The page's Content-Security-Policy blocks eval, so browser_evaluate cannot run here (${outcome.message}). On CSP-restricted pages use browser_inspect with a selector to read DOM state.`,
+          "The page's Content-Security-Policy blocks eval, so browser_evaluate cannot run here. To read the page text, use browser_snapshot with format:\"text\" or format:\"markdown\" (they do not need eval); use browser_inspect with a selector only when you need the framework state behind one element.",
           'UNSUPPORTED_CAPABILITY'
         );
       }

@@ -1,10 +1,11 @@
 import { createCommandRouter } from './router.js';
 import { createPageEvaluator } from './evaluate.js';
 import { unwrapInjectionResult } from './page-result.js';
-import { captureFullPage } from './screenshot.js';
+import { captureFullPage, ensureWindowRenderable } from './screenshot.js';
 import { createNetworkMonitor } from './network-monitor.js';
 import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity } from './session.js';
 import { waitSliceMs } from './wait.js';
+import { navigatedSince } from './navigation.js';
 import { REDACT_STORAGE_KEY, compileRules, applyRedaction } from './redact.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
@@ -140,10 +141,23 @@ async function redact(value, tabId) {
   return redacted;
 }
 
+async function tabInfo(tabId) {
+  try {
+    const tab = await api.tabs.get(Number(tabId));
+    return tab ? { url: tab.url ?? null, status: tab.status ?? null } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function callPage(tabId, method, params, attempt = 0) {
   const frame = splitFrameRef(params?.ref);
   const frameTarget = frame.frameId === null ? {} : { frameIds: [frame.frameId] };
   const effective = frame.frameId === null ? params : { ...params, ref: frame.ref };
+  // An action can navigate the tab and tear the content script down mid-call,
+  // which surfaces as "no result, no error". Capture the URL first so that case
+  // can be told apart from a real crash when the call comes back empty.
+  const urlBefore = ACTION_METHODS.has(method) ? (await tabInfo(tabId))?.url ?? null : null;
   await inject(tabId, frameTarget);
   const result = await api.scripting.executeScript({
     target: { tabId, ...frameTarget },
@@ -169,6 +183,7 @@ async function callPage(tabId, method, params, attempt = 0) {
       }
       if (name === 'browser_wait_for') return engine.waitFor(input);
       if (name === 'browser_screenshot') return engine.screenshotTarget(input);
+      if (name === 'browser_image') return engine.imageSource(input);
       if (name === 'browser_upload') return engine.upload(input, input.files);
       if (name === 'browser_network') return engine.network(input);
       if (name === 'browser_scroll') return engine.scroll(input);
@@ -194,6 +209,16 @@ async function callPage(tabId, method, params, attempt = 0) {
   if (attempt < 1 && !ACTION_METHODS.has(method)) {
     await delay(350);
     return callPage(tabId, method, params, attempt + 1);
+  }
+  // An action that navigated is a success, not a failure: the click/fill landed
+  // and the page is now loading. Reporting TAB_NOT_ACCESSIBLE here made callers
+  // re-click a link that had already worked. Say so plainly so they read the new
+  // page instead of repeating the action.
+  if (ACTION_METHODS.has(method)) {
+    const tab = await tabInfo(tabId);
+    if (navigatedSince(urlBefore, tab)) {
+      return { navigated: true, url: tab?.url ?? null, revision: 0, note: `The ${method} navigated the tab; read the new page before acting again.` };
+    }
   }
   throw Object.assign(
     new Error(`Page returned no result for ${method}; the tab may be navigating or crashed. Re-run browser_snapshot for fresh refs, then retry.`),
@@ -250,6 +275,7 @@ async function screenshot(params) {
   // tab. Bring the target to the front for the capture, then restore the tab the
   // user was actually looking at. captureFullPage does the same.
   const tab = await api.tabs.get(tabId);
+  await ensureWindowRenderable(api, tab.windowId);
   const [previousActive] = await api.tabs.query({ active: true, windowId: tab.windowId });
   if (previousActive?.id !== tabId) await api.tabs.update(tabId, { active: true });
   let dataUrl;
@@ -260,6 +286,79 @@ async function screenshot(params) {
   }
   const metadata = await callPage(tabId, 'browser_screenshot', params);
   return { ...metadata, dataUrl };
+}
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+// Fetch the bytes behind a URL and hand them back as a data URL, so the model
+// can actually see a picture choice instead of the label "a." that a snapshot
+// reports. This runs in the background script rather than the page: a page-side
+// fetch of a cross-origin image is blocked by CORS, while the background script
+// has host permissions for the tab and carries the session cookies the request
+// needs (a login-gated diagram loads the same way it does in the page).
+async function image(params) {
+  const tabId = Number(params.tabId);
+  let url = typeof params.url === 'string' ? params.url.trim() : '';
+  let source = null;
+  // With no explicit url, ask the page for the target's source so a caller can
+  // pass the ref it already has from a snapshot.
+  if (!url) {
+    if (!params.ref && !params.selector) throw failure('Provide a url, or a ref/selector of an image element.');
+    source = await callPage(tabId, 'browser_image', params);
+    url = source?.url ?? '';
+  }
+  if (!url) throw failure('No image URL to fetch.');
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw failure(`Not a valid image URL: ${url}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'data:') {
+    throw failure(`Unsupported image URL scheme: ${parsed.protocol}`);
+  }
+
+  let dataUrl = url;
+  let type = null;
+  let bytes = 0;
+  if (parsed.protocol !== 'data:') {
+    let response;
+    try {
+      response = await fetch(url, { credentials: 'include' });
+    } catch (error) {
+      throw Object.assign(new Error(`Image fetch failed: ${error?.message ?? url}`), { code: 'TAB_NOT_ACCESSIBLE', retryable: true });
+    }
+    if (!response.ok) throw failure(`Image fetch returned HTTP ${response.status}: ${url}`);
+    type = response.headers.get('content-type') ?? '';
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    bytes = buffer.byteLength;
+    if (bytes > MAX_IMAGE_BYTES) {
+      throw Object.assign(new Error(`Image exceeds the 8MB limit (${Math.round(bytes / 1024)} KB): ${url}`), { code: 'INVALID_ARGUMENT', retryable: false });
+    }
+    if (type && !type.startsWith('image/')) {
+      throw failure(`The URL did not return an image (content-type: ${type}).`);
+    }
+    // Base64 in chunks: a single spread of a multi-megabyte array overflows the
+    // argument limit, so build the string in slices.
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let index = 0; index < buffer.length; index += CHUNK) {
+      binary += String.fromCharCode.apply(null, buffer.subarray(index, index + CHUNK));
+    }
+    dataUrl = `data:${type || 'image/png'};base64,${btoa(binary)}`;
+  }
+
+  return {
+    dataUrl,
+    url,
+    alt: source?.alt ?? '',
+    width: source?.width ?? 0,
+    height: source?.height ?? 0,
+    naturalWidth: source?.naturalWidth ?? 0,
+    naturalHeight: source?.naturalHeight ?? 0,
+    page: source?.page ?? null,
+    bytes
+  };
 }
 
 async function cookies(params) {
@@ -415,6 +514,7 @@ async function visualSnapshot(params) {
   const tabId = Number(params.tabId);
   const snapshot = await callPage(tabId, 'browser_snapshot', { ...params, mode: undefined, frames: undefined, boundingBox: true });
   const tab = await api.tabs.get(tabId);
+  await ensureWindowRenderable(api, tab.windowId);
   // captureVisibleTab grabs the window's visible tab, not the named one, so a
   // background Automation tab would draw its marks over an unrelated foreground
   // tab. Bring the target forward for the capture and restore it afterwards,
@@ -453,11 +553,24 @@ async function command(method, params) {
   if (method === 'browser_snapshot' && params.mode === 'visual') return visualSnapshot(params);
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
+  if (method === 'browser_image') return image(params);
   if (method === 'browser_cookies') return cookies(params);
   if (method === 'browser_storage') return storage(params);
   if (method === 'browser_download') return download(params);
   if (['browser_tabs', 'browser_open', 'browser_close', 'browser_focus'].includes(method)) return tabs(method, params);
-  if (method === 'browser_status' || method === 'browser_connect') return { connected: true, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', storage: true, cookies: true, upload: true, download: true, evaluate: true, network_observe: 'live-metadata-headers-upload', network_request_body: true, network_response_body: typeof api.webRequest?.filterResponseData === 'function', network_intercept: false, browser_debugger: false, os_pointer: false, tab_groups: typeof api.tabGroups?.update === 'function' ? 'native' : 'logical' } };
+  if (method === 'browser_status' || method === 'browser_connect') {
+    // windowState lets a caller preflight a screenshot: captureVisibleTab only
+    // paints a window the OS is rendering, so "minimized"/"hidden" means the
+    // capture will fail until the window is restored.
+    let windowState = null;
+    try {
+      const info = await session.info();
+      const activeTabId = Number(params?.tabId) || (await session.reconcile()).tabIds[0] || null;
+      const windowId = activeTabId !== null ? (await api.tabs.get(activeTabId)).windowId : (await api.windows.getCurrent()).id;
+      windowState = (await api.windows.get(windowId)).state;
+    } catch { /* status must survive a missing window */ }
+    return { connected: true, windowState, browser: api.runtime.getBrowserInfo ? await api.runtime.getBrowserInfo() : 'chromium-compatible', capabilities: { tabs: true, dom: true, snapshot: true, inventory: true, screenshot: 'bitmap', image: true, storage: true, cookies: true, upload: true, download: true, evaluate: true, network_observe: 'live-metadata-headers-upload', network_request_body: true, network_response_body: typeof api.webRequest?.filterResponseData === 'function', network_intercept: false, browser_debugger: false, os_pointer: false, tab_groups: typeof api.tabGroups?.update === 'function' ? 'native' : 'logical' } };
+  }
   if (method === 'browser_disconnect') return { connected: false };
   throw Object.assign(new Error(`Unsupported capability: ${method}`), { code: 'UNSUPPORTED_CAPABILITY' });
 }
@@ -528,6 +641,7 @@ api.runtime.onMessage?.addListener(async message => {
         snapshot: true,
         inventory: true,
         screenshot: 'bitmap',
+        image: true,
         storage: true,
         cookies: true,
         upload: true,

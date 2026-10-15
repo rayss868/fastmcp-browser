@@ -32,8 +32,26 @@ async function toDataUrl(blob) {
   return `data:${blob.type};base64,${btoa(binary)}`;
 }
 
+// captureVisibleTab can only render a window the OS is actually painting; a
+// minimized or hidden window fails with an opaque "image readback failed".
+// Check the state first so the caller gets the fix instead of the mystery.
+export async function ensureWindowRenderable(api, windowId) {
+  try {
+    const state = (await api.windows.get(windowId)).state;
+    if (state === 'minimized' || state === 'hidden') {
+      throw Object.assign(
+        new Error(`The browser window is ${state}; captureVisibleTab cannot render a hidden window. Restore the Chrome window first, then retry.`),
+        { code: 'WINDOW_HIDDEN', retryable: false }
+      );
+    }
+  } catch (error) {
+    if (error?.code === 'WINDOW_HIDDEN') throw error;
+  }
+}
+
 export async function captureFullPage(api, tabId) {
   const target = await api.tabs.get(tabId);
+  await ensureWindowRenderable(api, target.windowId);
   const [previousActive] = await api.tabs.query({ active: true, windowId: target.windowId });
   await api.tabs.update(tabId, { active: true });
   let originalScrollY;
