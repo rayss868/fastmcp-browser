@@ -195,7 +195,9 @@ test('a frozen tab is woken once before reporting TAB_NOT_ACCESSIBLE', async () 
   assert.ok(background.includes('tab.frozen'), 'wake must detect a frozen tab');
   assert.ok(background.includes("{ state: 'normal' }"), 'wake must restore a minimized window');
   assert.ok(background.includes('return callPage(tabId, method, params, attempt, true)'), 'the no-result path must retry after waking');
-  assert.ok(background.includes('return callPage(tabId, method, params, attempt + 1, woken)'), 'the read retry must preserve the woken flag');
+  assert.ok(background.includes('return callPage(tabId, method, params, attempt + 1, wokenFlag)'), 'the read retry must preserve the woken flag');
+  assert.ok(background.includes('async function waitForThaw('), 'wake must wait until frozen clears before retrying');
+  assert.ok(background.includes('ACTION_METHODS.has(method) && (await wakeTab(tabId))'), 'actions must wake proactively so one AI turn suffices');
   assert.ok(background.includes('frozen by Memory Saver'), 'the final error must name the frozen-tab cause');
 });
 

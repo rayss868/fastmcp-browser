@@ -155,6 +155,23 @@ async function tabInfo(tabId) {
 // comes back empty. Restore the window and bring the tab forward so the page
 // engine is reachable again. Returns why it woke, or null when the tab looked
 // already awake.
+// A restored window needs a moment before the renderer thaws the tab; poll
+// tabs.get until frozen clears (or a short budget runs out) so the retry below
+// lands on a live page instead of a still-frozen one.
+async function waitForThaw(tabId, budgetMs = 5000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    try {
+      const tab = await api.tabs.get(Number(tabId));
+      if (!tab.frozen && !tab.discarded) return true;
+    } catch {
+      return false;
+    }
+    await delay(400);
+  }
+  return false;
+}
+
 async function wakeTab(tabId) {
   try {
     const tab = await api.tabs.get(Number(tabId));
@@ -166,7 +183,8 @@ async function wakeTab(tabId) {
     // Activation alone does not thaw a tab inside a hidden window, and a
     // restored window only renders its active tab — do both.
     await api.tabs.update(tab.id, { active: true });
-    return hidden ? 'window-restored' : 'tab-activated';
+    const thawed = await waitForThaw(tab.id);
+    return hidden ? 'window-restored' : thawed ? 'tab-activated' : 'tab-activate-attempted';
   } catch {
     return null;
   }
@@ -179,6 +197,13 @@ async function callPage(tabId, method, params, attempt = 0, woken = false) {
   // An action can navigate the tab and tear the content script down mid-call,
   // which surfaces as "no result, no error". Capture the URL first so that case
   // can be told apart from a real crash when the call comes back empty.
+  // Proactive wake for actions: a frozen tab guarantees the inject below comes
+  // back empty, so thaw first instead of spending one failed attempt. Reads
+  // skip this — a warm digest can still answer without thawing the renderer.
+  let wokenFlag = woken;
+  if (!wokenFlag && ACTION_METHODS.has(method) && (await wakeTab(tabId))) {
+    wokenFlag = true;
+  }
   const urlBefore = ACTION_METHODS.has(method) ? (await tabInfo(tabId))?.url ?? null : null;
   let result;
   try {
@@ -224,8 +249,7 @@ async function callPage(tabId, method, params, attempt = 0, woken = false) {
     // inject()/executeScript itself threw (frozen or discarded tab rejects the
     // injection). Wake once and retry; if the tab looked awake, surface the
     // original error untouched.
-    if (!woken && (await wakeTab(tabId))) {
-      await delay(600);
+    if (!wokenFlag && (await wakeTab(tabId))) {
       return callPage(tabId, method, params, attempt, true);
     }
     throw injectError;
@@ -242,7 +266,7 @@ async function callPage(tabId, method, params, attempt = 0, woken = false) {
   // observe, so report the unknown state instead of firing twice.
   if (attempt < 1 && !ACTION_METHODS.has(method)) {
     await delay(350);
-    return callPage(tabId, method, params, attempt + 1, woken);
+    return callPage(tabId, method, params, attempt + 1, wokenFlag);
   }
   // An action that navigated is a success, not a failure: the click/fill landed
   // and the page is now loading. Reporting TAB_NOT_ACCESSIBLE here made callers
@@ -258,15 +282,14 @@ async function callPage(tabId, method, params, attempt = 0, woken = false) {
   // this: warm digest reads still succeed while injected code never runs. Wake
   // it once (restore the window, activate the tab) and retry; a no-result call
   // produced no side effect, so retrying an action is safe here.
-  if (!woken) {
+  if (!wokenFlag) {
     const why = await wakeTab(tabId);
     if (why) {
-      await delay(600);
       return callPage(tabId, method, params, attempt, true);
     }
   }
   throw Object.assign(
-    new Error(`Page returned no result for ${method}; the tab may be navigating, frozen by Memory Saver, or crashed. ${woken ? 'The tab was woken but still did not answer — re-run browser_snapshot and retry.' : 'Retry the call; the extension will wake a frozen tab automatically.'}`),
+    new Error(`Page returned no result for ${method}; the tab may be navigating, frozen by Memory Saver, or crashed. ${wokenFlag ? 'The tab was woken but still did not answer — re-run browser_snapshot and retry.' : 'Retry the call; the extension will wake a frozen tab automatically.'}`),
     { code: 'TAB_NOT_ACCESSIBLE', retryable: !ACTION_METHODS.has(method) }
   );
 }
