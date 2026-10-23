@@ -24,6 +24,7 @@ async function copyFile(from, to) {
 
 async function copyContentEngine(out) {
   const files = [
+    'sheet-format.js',
     'content/refs.js',
     'content/semantics.js',
     'content/readable.js',
@@ -33,6 +34,7 @@ async function copyContentEngine(out) {
     'content/files.js',
     'content/network.js',
     'content/diff.js',
+    'content/workspace.js',
     'content/engine.js'
   ];
   const chunks = [];
@@ -55,6 +57,7 @@ async function build(target) {
   await mkdir(resolve(out, 'src/content'), { recursive: true });
   await mkdir(resolve(out, 'adapters'), { recursive: true });
   await copyFile(resolve(source, 'background.js'), resolve(out, 'background.js'));
+  await copyFile(resolve(source, 'sheet-format.js'), resolve(out, 'sheet-format.js'));
   await copyFile(resolve(source, 'page-result.js'), resolve(out, 'page-result.js'));
   await copyFile(resolve(source, 'router.js'), resolve(out, 'router.js'));
   await copyFile(resolve(source, 'session.js'), resolve(out, 'session.js'));

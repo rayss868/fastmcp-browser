@@ -7,6 +7,7 @@ import { createStealthLayer, createActionability } from './stealth.js';
 import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
 import { computeDiff, shouldRefresh } from './diff.js';
+import { createWorkspaceAdapter } from './workspace.js';
 
 // The content script is re-injected at the start of every MCP call. Reuse the
 // surface from a previous injection so a ref from an earlier snapshot stays
@@ -40,6 +41,8 @@ const pointerController = createPointerController({
   windowRef: window,
   refs
 });
+
+const workspace = createWorkspaceAdapter();
 
 const stealthLayer = pointerController.stealth ?? createStealthLayer({ documentRef: document, windowRef: window, refs });
 const actionability = createActionability({ documentRef: document });
@@ -1050,12 +1053,61 @@ function find(input = {}) {
   return { ...discovery.find(input), geometry: pageGeometry() };
 }
 
+// Canvas editors (Google Sheets/Docs) have no cells or text in the DOM, so the
+// page's own editing surfaces are driven instead. appInfo lets the caller learn
+// which surface exists before deciding to read or write.
+function workspaceInfo() {
+  return { ...(workspace.appInfo() ?? { app: null }), url: location.href, title: document.title, revision: state.revision };
+}
+
+async function workspaceSelect(input = {}) {
+  const app = workspace.appInfo();
+  if (!app || app.app !== 'sheets') throw Object.assign(new Error('workspace_select needs a Google Sheets tab.'), { code: 'UNSUPPORTED_CAPABILITY', retryable: false });
+  if (!input.range) throw Object.assign(new Error('workspace_select needs a range such as "B2" or "A1:D5".'), { code: 'INVALID_ARGUMENT', retryable: false });
+  await workspace.selectRange(input.range);
+  return finish({ selected: await workspace.readSelectedCell(), revision: state.revision });
+}
+
+async function workspaceWrite(input = {}) {
+  const app = workspace.appInfo();
+  if (!app) throw Object.assign(new Error('workspace_write needs a Google Sheets or Google Docs tab.'), { code: 'UNSUPPORTED_CAPABILITY', retryable: false });
+  if (app.app === 'sheets') {
+    if (input.range) await workspace.selectRange(input.range);
+    if (input.value !== undefined) await workspace.writeFormula(String(input.value));
+    if (input.values !== undefined) await workspace.writeMatrix(input.values, input.range ?? 'A1');
+    return finish({ wrote: true, selected: await workspace.readSelectedCell(), revision: state.revision });
+  }
+  if (app.app === 'docs') {
+    if (input.value === undefined) throw Object.assign(new Error('workspace_write on Google Docs needs value (the text to write).'), { code: 'INVALID_ARGUMENT', retryable: false });
+    const result = await workspace.writeDocs(String(input.value), { replace: input.replace !== false });
+    return finish({ ...result, revision: state.revision });
+  }
+  throw Object.assign(new Error(`workspace_write does not support ${app.app} yet.`), { code: 'UNSUPPORTED_CAPABILITY', retryable: false });
+}
+
+async function workspaceRead(input = {}) {
+  const app = workspace.appInfo();
+  if (!app) throw Object.assign(new Error('workspace_read needs a Google Workspace tab.'), { code: 'UNSUPPORTED_CAPABILITY', retryable: false });
+  if (app.app === 'sheets') {
+    // A range read through the formula bar is the fallback for accounts whose
+    // CSV export comes back empty; without a range only the selected cell is
+    // read, because walking the grid cell by cell is expensive.
+    if (input.range) {
+      const result = await workspace.readRange(input.range, { maxRows: input.maxRows, maxCols: input.maxCols });
+      return { app: 'sheets', source: 'formula-bar', url: location.href, revision: state.revision, ...result };
+    }
+    return { app: 'sheets', source: 'selection', selected: await workspace.readSelectedCell(), url: location.href, revision: state.revision };
+  }
+  if (app.app === 'docs') return { app: 'docs', text: workspace.docsText(), url: location.href, revision: state.revision };
+  return { app: app.app, url: location.href, revision: state.revision };
+}
+
 function network(input = {}) {
   const entries = typeof performance.getEntriesByType === 'function' ? performance.getEntriesByType('resource') : [];
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, imageSource, scroll, pointer, upload, network, stealth: stealthLayer, stealthConfig, state };
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, imageSource, scroll, pointer, upload, network, workspaceInfo, workspaceSelect, workspaceWrite, workspaceRead, stealth: stealthLayer, stealthConfig, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => {

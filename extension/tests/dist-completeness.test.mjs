@@ -62,6 +62,19 @@ for (const target of ['chromium', 'firefox']) {
   });
 }
 
+// copyContentEngine concatenates every module into one IIFE. Two modules that
+// both declare a top-level `delay` produce a SyntaxError for the whole bundle,
+// so no page tool works at all — a failure that every per-module test misses.
+test('the concatenated content bundle declares each top-level identifier once', async () => {
+  const bundle = await readFile(resolve(root, 'dist/chromium/src/content/engine.js'), 'utf8');
+  const seen = new Map();
+  for (const [, name] of bundle.matchAll(/^(?:function|const|let|var)\s+([A-Za-z0-9_$]+)/gm)) {
+    seen.set(name, (seen.get(name) ?? 0) + 1);
+  }
+  const duplicates = [...seen].filter(([, count]) => count > 1).map(([name]) => name);
+  assert.deepEqual(duplicates, [], 'duplicate top-level declarations break the whole content engine');
+});
+
 test('Firefox build permits the local WebSocket without upgrading it to TLS', async () => {
   const firefox = JSON.parse(await readFile(resolve(root, 'dist/firefox/manifest.json'), 'utf8'));
   const chromium = JSON.parse(await readFile(resolve(root, 'dist/chromium/manifest.json'), 'utf8'));

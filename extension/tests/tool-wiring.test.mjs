@@ -36,6 +36,31 @@ test('evaluate and inspect results pass through redaction', async () => {
   );
 });
 
+test('waking a frozen tab hands focus back to the user', async () => {
+  // Thawing requires making the tab active, but leaving the user staring at an
+  // automation tab is a bug of its own. Only screenshots keep it forward.
+  const background = await read('../src/background.js');
+  assert.ok(background.includes('async function activeTabIn('), 'background must remember the previous active tab');
+  assert.ok(background.includes('async function restoreIfStillForward('), 'background must restore it');
+  assert.ok(background.includes('async function withForegroundTab('), 'one wrapper must own borrow-and-return');
+  assert.ok(/finally \{\s*await restoreIfStillForward\(previousId, tab\.id, tab\.windowId\);/.test(background), 'restore must run even when the call throws');
+  assert.ok(background.includes('if (active?.id !== targetId) return;'), 'restore must not fight a tab switch the user made');
+});
+
+test('every tab-scoped method wakes a frozen tab before running', async () => {
+  // A frozen renderer answers injected calls with an empty result. Only callPage
+  // had a wake path, so evaluate/inspect/screenshot/cookies timed out forever on
+  // a Memory Saver tab. The guard lives in one place so no method can forget it.
+  const background = await read('../src/background.js');
+  assert.ok(background.includes('async function withForegroundTab('), 'background must own a single wake gate');
+  assert.ok(background.includes('return withForegroundTab(tabId, () => runCommand(method, params)'), 'execute must route through it');
+  assert.ok(background.includes('WAKE_EXEMPT'), 'tab-management methods must be exempt from waking');
+  for (const exempt of ['browser_close', 'browser_tabs', 'browser_open']) {
+    assert.ok(background.includes(`'${exempt}'`), `${exempt} must be exempt`);
+  }
+  assert.ok(background.includes('FOREGROUND_METHODS'), 'screenshot/workspace calls must hold the foreground');
+});
+
 test('the action path uses the shared diff and refresh policy', async () => {
   const engine = await read('../src/content/engine.js');
   const diff = await read('../src/content/diff.js');
@@ -199,6 +224,42 @@ test('a frozen tab is woken once before reporting TAB_NOT_ACCESSIBLE', async () 
   assert.ok(background.includes('async function waitForThaw('), 'wake must wait until frozen clears before retrying');
   assert.ok(background.includes('ACTION_METHODS.has(method) && (await wakeTab(tabId))'), 'actions must wake proactively so one AI turn suffices');
   assert.ok(background.includes('frozen by Memory Saver'), 'the final error must name the frozen-tab cause');
+});
+
+test('browser_act is treated as an action but does not steal focus', async () => {
+  // browser_act performs a click/fill/type, so it needs the action path (wake a
+  // frozen tab, detect navigation). It must NOT be force-activated: a hidden tab
+  // still completes its 150 ms settle (measured 790 ms, well inside the budget),
+  // so foregrounding it would take the user's focus for no benefit.
+  const background = await read('../src/background.js');
+  assert.ok(background.includes("'browser_act', 'browser_workspace_select'"), 'browser_act must count as an action');
+  assert.ok(!background.includes("|| method === 'browser_act')"), 'browser_act must not force the tab to the foreground');
+});
+
+test('workspace tools are wired from the router through the page engine and background export', async () => {
+  const router = await read('../src/router.js');
+  const background = await read('../src/background.js');
+  const engine = await read('../src/content/engine.js');
+  const workspace = await read('../src/content/workspace.js');
+  const build = await read('../build.mjs');
+
+  for (const method of ['browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read']) {
+    assert.ok(router.includes(`'${method}'`), `router must allow ${method}`);
+    assert.ok(background.includes(`'${method}'`), `background must route ${method}`);
+  }
+  assert.ok(background.includes('engine.workspaceWrite(input)'), 'background must dispatch writes to the page adapter');
+  assert.ok(background.includes('engine.workspaceRead(input)'), 'background must dispatch reads to the page adapter');
+  assert.ok(engine.includes('createWorkspaceAdapter()'), 'the engine must instantiate the workspace adapter');
+  assert.ok(engine.includes('workspaceInfo, workspaceSelect, workspaceWrite, workspaceRead'), 'the adapter must be published on the page surface');
+  // Canvas content never reaches the DOM, so the sheet read must come from the
+  // cookie-authenticated CSV export in the background.
+  assert.ok(background.includes('async function readSheetCsv('), 'background must own the sheet export read');
+  assert.ok(background.includes('export?format=csv'), 'the export endpoint must be the sheet read');
+  assert.ok(workspace.includes('#t-name-box'), 'selection must go through the Sheets Name Box');
+  assert.ok(workspace.includes('#t-formula-bar-input'), 'writes must go through the Sheets formula bar');
+  assert.ok(workspace.includes('.docs-texteventtarget-iframe'), 'Docs writes must target its event-target iframe');
+  assert.ok(build.includes("'content/workspace.js'"), 'the workspace adapter must be bundled');
+  assert.ok(build.includes("'sheet-format.js'"), 'the shared parser must be bundled');
 });
 
 test('drag can scroll ref endpoints into view, and snapshot flags image controls', async () => {

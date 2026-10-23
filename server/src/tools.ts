@@ -56,7 +56,8 @@ export const TOOL_NAMES = [
   'browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
   'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_act', 'browser_scroll',
   'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_image', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
-  'browser_storage', 'browser_evaluate', 'browser_inspect', 'browser_instances', 'browser_use_instance', 'browser_disconnect'
+  'browser_storage', 'browser_evaluate', 'browser_inspect', 'browser_instances', 'browser_use_instance', 'browser_disconnect',
+  'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'
 ] as const;
 
 export const TOOL_DOCS: Record<string, string> = {
@@ -93,7 +94,11 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_evaluate: 'Run a JavaScript expression (1-10000 characters) in the page MAIN world of the given tab and return its JSON result. This is a last-resort escape hatch, not a way to read a page. It needs fallback, one sentence naming what the extension tools could not give you, and it is refused with FALLBACK_REQUIRED without it; it is also refused with ORIENT_FIRST until you have read the tab with browser_snapshot format:"digest" (or browser_inventory/browser_find), because the extension returns the interactive controls with refs faster than a hand-rolled DOM dump. Most reads never need browser_evaluate: use browser_snapshot, browser_find, browser_inventory, or browser_inspect. Pass ref and revision from the latest snapshot to bind the resolved element as `element` (a function expression receives it as its argument), so the script targets a specific element without a selector and stale refs are rejected. On pages whose CSP blocks eval it fails with UNSUPPORTED_CAPABILITY; use browser_inspect with a selector instead. Return only the small set of values you need (pick fields, count, boolean) — avoid dumping large DOM subtrees or whole documents; results can reach 1 MB and will slow the session.',
   browser_instances: 'List connected browser extension instances (one per browser profile) with id, browser brand, active-tab hint, which profile currently has OS window focus, and which instance the bridge currently routes session commands to. Use `focused` to see which profile the user is looking at; focus is informational only and does not change routing, so select an instance explicitly when multiple profiles are connected.',
   browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
-  browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.'
+  browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.',
+  browser_workspace_info: 'Detect whether the tab is a Google Workspace app (Sheets, Docs, Slides) and report which editing surface is available. Google Sheets paints its grid to a canvas and Google Docs renders text through an event-target iframe, so browser_snapshot sees almost nothing there; call this first to learn which workspace tool applies before reading or writing. Then load the matching project skill: automating-google-sheets for Sheets, automating-google-docs for Docs. Returns app, document id, sheet gid, and booleans for canvas/nameBox/formulaBar/docsTarget.',
+  browser_workspace_select: 'Google Sheets only: move the cell selection in the given tab by typing an A1 range into the Name Box and pressing Enter (e.g. "B2" or "A1:D5"). This is the deterministic way into a canvas grid — no pixel guessing. Returns the selected range and the formula bar value.',
+  browser_workspace_write: 'Write into a Google Workspace document in the given tab through the app\'s own editing surfaces instead of the canvas. On Sheets, pass range (A1 notation) plus either value (one cell/formula) or values (a 2D array or TSV string, written cell by cell); the Name Box selects the target and the formula bar commits each edit, so formulas and formatting behave like a typed edit. On Docs, pass value to replace the document body (set replace:false to append at the caret). Returns what was written plus the read-back state.',
+  browser_workspace_read: 'Read a Google Workspace document that the DOM snapshot cannot see. On Sheets the CSV export is fetched in the background with the tab\'s session cookies and parsed into rows; when that export returns an empty body (some accounts) the grid is read cell by cell through the Name Box and formula bar for a bounded range (default A1:J50). Pass range in A1 notation to slice either path, e.g. "A1:D20". On Docs the plain-text export is fetched the same way, because the body itself is canvas-rendered. Returns rows with rowCount/colCount and a source field, or the document text.'
 };
 
 const TAB_ID: JsonSchema = { type: 'integer', description: 'Target tab ID from browser_tabs; omit to use the session default tab.' };
@@ -251,7 +256,27 @@ const schemas: Record<string, JsonSchema> = {
   }, ['expression', 'fallback']),
   browser_instances: object({}),
   browser_use_instance: object({ id: { type: 'string', description: 'Instance id returned by browser_instances.' } }, ['id']),
-  browser_disconnect: object({})
+  browser_disconnect: object({}),
+  browser_workspace_info: object({ tabId: TAB_ID }),
+  browser_workspace_select: object({
+    tabId: TAB_ID,
+    range: { type: 'string', description: 'A1 range to select, such as "B2" or "A1:D5".' }
+  }, ['range']),
+  browser_workspace_write: object({
+    tabId: TAB_ID,
+    range: { type: 'string', description: 'Sheets: A1 target for value, or the top-left cell for values (default A1).' },
+    value: { type: 'string', description: 'Sheets: a single value or formula for range. Docs: the text to write.' },
+    values: { description: 'Sheets: a 2D array of rows (or a TSV string) written starting at range.' },
+    replace: { type: 'boolean', description: 'Docs only: replace the whole body (default true) or append at the caret when false.' }
+  }),
+  browser_workspace_read: object({
+    tabId: TAB_ID,
+    range: { type: 'string', description: 'Sheets: A1 range to slice, such as "A1:D20". Omit to read the whole sheet through the CSV export; pass a range to read the grid through the formula bar when the export is unavailable.' },
+    gid: { type: 'string', description: 'Sheets: numeric sheet id; defaults to the gid in the tab URL.' },
+    sheets: { type: 'boolean', description: 'Set false to skip the CSV export path and read the page surface instead.' },
+    maxRows: { type: 'integer', minimum: 1, maximum: 1000, description: 'Formula-bar fallback: maximum rows to walk (default 200).' },
+    maxCols: { type: 'integer', minimum: 1, maximum: 200, description: 'Formula-bar fallback: maximum columns to walk (default 50).' }
+  })
 };
 
 const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);
@@ -277,7 +302,8 @@ export function registerBrowserTools(bridge: BrowserBridge): Tool[] {
 
 const READ_ONLY_METHODS = new Set([
   'browser_snapshot', 'browser_find', 'browser_inventory', 'browser_status', 'browser_tabs', 'browser_inspect',
-  'browser_network', 'browser_evaluate', 'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_image'
+  'browser_network', 'browser_evaluate', 'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_image',
+  'browser_workspace_info', 'browser_workspace_read'
 ]);
 
 function timeoutFor(name: string, params: Record<string, unknown>): number {
@@ -287,6 +313,8 @@ function timeoutFor(name: string, params: Record<string, unknown>): number {
   if (name === 'browser_image') return 30000;
   if (name === 'browser_evaluate') return 30000;
   if (name === 'browser_act') return Math.min(120000, Number(params.timeoutMs ?? 3000) + 15000);
+  if (name === 'browser_workspace_write') return 120000;
+  if (name === 'browser_workspace_read') return 45000;
   return 15000;
 }
 

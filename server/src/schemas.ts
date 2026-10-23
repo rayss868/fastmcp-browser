@@ -127,7 +127,27 @@ export const zodSchemas: Record<string, z.ZodObject<any, any, any>> = {
   browser_evaluate: z.object({ tabId, expression: z.string().min(1).max(10000).describe('JavaScript expression (1-10000 characters) evaluated in the page MAIN world. Last resort: orient with browser_snapshot format:"digest" first, or this is refused with ORIENT_FIRST. With ref, the resolved element is available as `element`.'), fallback: z.string().min(1).describe('Required. One sentence naming what the extension tools could not give you; browser_evaluate is refused with FALLBACK_REQUIRED when this is missing.'), ref, revision }),
   browser_instances: z.object({}),
   browser_use_instance: z.object({ id: z.string().describe('Instance id returned by browser_instances.') }),
-  browser_disconnect: z.object({})
+  browser_disconnect: z.object({}),
+  browser_workspace_info: z.object({ tabId }),
+  browser_workspace_select: z.object({
+    tabId,
+    range: z.string().describe('A1 range to select, such as "B2" or "A1:D5".')
+  }),
+  browser_workspace_write: z.object({
+    tabId,
+    range: z.string().optional().describe('Sheets: A1 target for value, or the top-left cell for values (default A1).'),
+    value: z.string().optional().describe('Sheets: a single value or formula for range. Docs: the text to write.'),
+    values: z.union([z.array(z.array(z.union([z.string(), z.number(), z.boolean()]))), z.string()]).optional().describe('Sheets: a 2D array of rows (or a TSV string) written starting at range.'),
+    replace: z.boolean().optional().describe('Docs only: replace the whole body (default true) or append at the caret when false.')
+  }),
+  browser_workspace_read: z.object({
+    tabId,
+    range: z.string().optional().describe('Sheets: A1 range to slice, such as "A1:D20". Omit to read the whole sheet.'),
+    gid: z.string().optional().describe('Sheets: numeric sheet id; defaults to the gid in the tab URL.'),
+    sheets: z.boolean().optional().describe('Set false to skip the CSV export path and read the page surface instead.'),
+    maxRows: z.number().int().min(1).max(1000).optional().describe('Formula-bar fallback: maximum rows to walk (default 200).'),
+    maxCols: z.number().int().min(1).max(200).optional().describe('Formula-bar fallback: maximum columns to walk (default 50).')
+  })
 };
 
 const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);

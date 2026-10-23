@@ -3,11 +3,24 @@
 // different URL is rejected: on an SPA (pushState) the JS world survives the
 // navigation, so an old node can still be isConnected while being from the
 // previous view — a ref that silently resolves there acts on the wrong page.
+// Hash-only changes are the same document: a hash route (CTFd challenge modals,
+// many docs sites) rewrites location.hash without touching the DOM the refs
+// point at. Comparing the full href made every ref on such a page resolve as
+// "navigated" forever, so actions failed while snapshots kept working.
+function documentIdentity(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+  } catch {
+    return String(url ?? '');
+  }
+}
+
 export function createReferenceStore(urlOf) {
   const refs = new Map();
   const descriptors = new Map();
   let revision = 1;
-  let originUrl = typeof urlOf === 'function' ? urlOf() : null;
+  let originUrl = typeof urlOf === 'function' ? documentIdentity(urlOf()) : null;
 
   return {
     get revision() {
@@ -16,7 +29,7 @@ export function createReferenceStore(urlOf) {
     reset() {
       refs.clear();
       revision += 1;
-      originUrl = typeof urlOf === 'function' ? urlOf() : null;
+      originUrl = typeof urlOf === 'function' ? documentIdentity(urlOf()) : null;
       return revision;
     },
     refFor(element, prefix = 'e', descriptor) {
@@ -36,7 +49,7 @@ export function createReferenceStore(urlOf) {
       // The document moved on (SPA route change) since these refs were minted, so
       // even a still-connected node belongs to the view the caller left. Expire
       // before returning it; the caller re-snapshots on the new page.
-      if (typeof urlOf === 'function' && originUrl != null && urlOf() !== originUrl) {
+      if (typeof urlOf === 'function' && originUrl != null && documentIdentity(urlOf()) !== originUrl) {
         throw Object.assign(new Error('Page navigated; refs from the previous page are no longer valid.'), { code: 'STALE_REF', retryable: true, navigated: true });
       }
       // Refs are keyed by element identity, so a connected element is still the

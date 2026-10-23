@@ -8,6 +8,64 @@ Build archives (Chromium zip, Firefox zip, Firefox xpi) are attached to each
 [GitHub Release](https://github.com/rayss868/fastmcp-browser/releases). This file
 is the source of truth for what changed in each version.
 
+## [Unreleased]
+
+## [0.7.0] - 2026-10-23
+
+### Added
+
+- **Google Workspace tools.** `browser_workspace_info`, `browser_workspace_select`,
+  `browser_workspace_write`, and `browser_workspace_read` let an agent work with
+  Google Sheets and Google Docs, which render their content to a canvas/event-target
+  iframe and were invisible to the DOM snapshot.
+  - Sheets: the Name Box selects an A1 range and the formula bar commits each cell,
+    so writes take the same path as a keyboard edit and are saved (verified across
+    a reload). Reads use the cookie-authenticated CSV export; when that endpoint
+    returns an empty body (observed on some accounts), the grid is read cell by
+    cell through the formula bar for a bounded range.
+  - Docs: reads use the plain-text export; writes go through the document's
+    event-target input.
+- Shared A1/CSV helpers (`extension/src/sheet-format.js`) with unit tests, plus a
+  guard test that fails if two concatenated content modules declare the same
+  top-level identifier (a `delay` collision would otherwise break the whole
+  content engine at parse time).
+- **Agent skills in `skills/`.** `using-fastmcp-browser`, `automating-google-sheets`,
+  and `automating-google-docs` package the working procedure so an agent loads the
+  right loop instead of rediscovering it every session. `browser_workspace_info`
+  points at the two Workspace skills, and a server test keeps every skill's
+  frontmatter, size, and tool references valid.
+
+### Fixed
+
+- **Ref-based actions on hash-routed pages.** The reference store compared the
+  full `location.href`, so a hash-only route change — a modal or view opened by
+  `#fragment` — expired every ref forever. `browser_snapshot` kept working because
+  it mints new refs, while every `browser_act`/`browser_click`/`browser_fill` that
+  reused a ref failed with `TAB_NOT_ACCESSIBLE`. Refs are now anchored to origin,
+  path, and query; the hash is ignored.
+- **Every tab-scoped call wakes a frozen tab.** `browser_evaluate`,
+  `browser_inspect`, `browser_screenshot`, `browser_cookies`, and `browser_storage`
+  bypass `callPage`, so they had no wake path at all: on a tab frozen by Memory
+  Saver they timed out on every attempt while other tools recovered. Waking now
+  lives in one place in front of the router, so no method can forget it.
+- **Waking a tab no longer steals the user's focus.** Thawing requires making the
+  tab active, but the previous foreground tab is now restored in a `finally`, so a
+  timeout or page error cannot strand the user on the automation tab. If the user
+  switched tabs mid-call their choice is left alone, and a window that had no
+  active tab before the call gets a different tab back instead of keeping ours.
+  Screenshots and the Workspace tools hold the foreground only for their own call.
+- **`browser_open` reports the tab as grouped.** A fresh tab reports `groupId: -1`
+  until `tabs.group` lands, and the create snapshot was returned unchanged, so the
+  model saw an automation tab that appeared to sit outside the Automation group.
+  The tab is now read back after grouping.
+- **Automation tabs opt out of Memory Saver.** Tabs joining the group are marked
+  `autoDiscardable: false`, so a long session no longer loses a tab to discard and
+  then has to thaw it before every call.
+- **Workspace timers survive background throttling.** The Sheets/Docs adapter
+  interleaves DOM writes with `setTimeout` waits; Chrome stretches those in a
+  background tab (a 200 ms wait measured ~790 ms hidden versus ~200 ms active), so
+  the adapter foregrounds the tab for the duration of its call.
+
 ## [0.6.0] - 2026-10-15
 
 ### Added

@@ -8,7 +8,7 @@ import { startRecording, stopRecording, recordingStatus } from '../dist/src/reco
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 34);
+  assert.equal(TOOL_NAMES.length, 38);
 });
 
 test('browser_image reads an image by url or by the ref of an image element', () => {

@@ -7,6 +7,7 @@ import { detectBrowser, createSessionManager, createFocusTracker, bridgeIdentity
 import { waitSliceMs } from './wait.js';
 import { navigatedSince } from './navigation.js';
 import { REDACT_STORAGE_KEY, compileRules, applyRedaction } from './redact.js';
+import { detectWorkspaceApp, parseA1Range, parseCsv, sliceRows, matrixSize } from './sheet-format.js';
 
 const api = globalThis.browser ?? globalThis.chrome;
 const PORT = 9229;
@@ -69,11 +70,36 @@ async function attachSession(method, result) {
 
 const evaluator = createPageEvaluator({ scripting: api.scripting, inject: tabId => inject(tabId) });
 
+// Memory Saver freezes background tabs, and a frozen renderer answers every
+// injected call with an empty result. callPage has its own wake path, but the
+// evaluator, screenshots, cookies/storage and the rest never reach it — they
+// simply timed out forever. Waking once here covers every tab-scoped method
+// without each one having to remember, and callPage's own wake then becomes a
+// cheap no-op because the tab is already thawed.
+const WAKE_EXEMPT = new Set(['browser_close', 'browser_tabs', 'browser_open', 'browser_status', 'browser_connect', 'browser_disconnect', 'browser_focus']);
+
+// Methods whose tab must stay in front for the whole call, not just while it
+// thaws: the workspace adapter's timers are throttled in the background, and a
+// screenshot captures whatever is visible.
+const FOREGROUND_METHODS = new Set([
+  'browser_screenshot', 'browser_image',
+  'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'
+]);
+
+async function runCommand(method, params) {
+  if (method === 'browser_evaluate') return redact(await evaluator.evaluate(params), params.tabId);
+  if (method === 'browser_inspect') return redact(await evaluator.inspect(params), params.tabId);
+  return attachSession(method, await command(method, params));
+}
+
 const router = createCommandRouter({
   execute: async (method, params) => {
-    if (method === 'browser_evaluate') return redact(await evaluator.evaluate(params), params.tabId);
-    if (method === 'browser_inspect') return redact(await evaluator.inspect(params), params.tabId);
-    return attachSession(method, await command(method, params));
+    if (WAKE_EXEMPT.has(method)) return runCommand(method, params);
+    const tabId = Number(params?.tabId);
+    if (!Number.isInteger(tabId)) return runCommand(method, params);
+    return withForegroundTab(tabId, () => runCommand(method, params), {
+      force: FOREGROUND_METHODS.has(method)
+    });
   },
   capabilities: { upload: true },
   network: (tabId, limit) => networkMonitor.get(tabId, limit),
@@ -122,7 +148,12 @@ const delay = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 const ACTION_METHODS = new Set([
   'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select',
   'browser_fill_form', 'browser_upload', 'browser_scroll', 'browser_pointer_move',
-  'browser_pointer_click', 'browser_pointer_drag'
+  'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_workspace_select',
+  'browser_workspace_write'
+]);
+
+const WORKSPACE_METHODS = new Set([
+  'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'
 ]);
 
 // Filter whatever a page read hands back before it reaches the AI. The rules
@@ -172,6 +203,77 @@ async function waitForThaw(tabId, budgetMs = 5000) {
   return false;
 }
 
+// The tab the user was actually looking at, so a wake can put it back. Chrome
+// only thaws a tab while it is the active one, so the activation is unavoidable
+// — but leaving the user's view on a background automation tab is not.
+async function activeTabIn(windowId) {
+  try {
+    const [active] = await api.tabs.query({ active: true, windowId });
+    return active?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Put the user's tab back only if we are still the one holding the foreground.
+// If they switched tabs while the call ran, leave their choice alone.
+// `previousId === null` means the window had no active tab before we started
+// (every tab was in the background), so we must not leave ours activated —
+// that is what silently stole focus and left the window with a tab the user
+// never chose.
+async function restoreIfStillForward(previousId, targetId, windowId) {
+  if (previousId === targetId) return;
+  try {
+    const [active] = await api.tabs.query({ active: true, windowId });
+    if (active?.id !== targetId) return;
+    if (Number.isInteger(previousId)) {
+      await api.tabs.update(previousId, { active: true });
+      return;
+    }
+    // Chrome has no "no active tab" state, so hand the window to any other tab
+    // instead of leaving the borrowed one in front.
+    const others = await api.tabs.query({ windowId });
+    const fallback = others.find(candidate => candidate.id !== targetId);
+    if (fallback) await api.tabs.update(fallback.id, { active: true });
+  } catch {
+    // the user closed it while we worked; nothing to restore
+  }
+}
+
+async function tabNeedsForeground(tabId) {
+  try {
+    const tab = await api.tabs.get(Number(tabId));
+    if (!tab) return null;
+    const win = await api.windows.get(tab.windowId);
+    const hidden = win.state === 'minimized' || win.state === 'hidden';
+    return { tab, win, hidden, needed: Boolean(tab.frozen || tab.discarded || hidden) };
+  } catch {
+    return null;
+  }
+}
+
+// The whole "borrow the tab, then give it back" contract lives here: bring the
+// tab forward only when it is frozen, discarded, minimized, or the caller needs
+// unthrottled timers, run the command, and hand the foreground back in a
+// `finally` so a timeout or page error cannot strand the user on our tab.
+async function withForegroundTab(tabId, run, { force = false } = {}) {
+  if (!Number.isInteger(tabId)) return run();
+  const state = await tabNeedsForeground(tabId);
+  if (!state) return run();
+  const { tab, win, hidden, needed } = state;
+  const previousId = await activeTabIn(tab.windowId);
+  if (needed || force) {
+    if (hidden) await api.windows.update(tab.windowId, { state: 'normal' });
+    await api.tabs.update(tab.id, { active: true });
+    if (needed) await waitForThaw(tab.id);
+  }
+  try {
+    return await run();
+  } finally {
+    await restoreIfStillForward(previousId, tab.id, tab.windowId);
+  }
+}
+
 async function wakeTab(tabId) {
   try {
     const tab = await api.tabs.get(Number(tabId));
@@ -181,7 +283,8 @@ async function wakeTab(tabId) {
     if (!tab.frozen && !tab.discarded && !hidden) return null;
     if (hidden) await api.windows.update(tab.windowId, { state: 'normal' });
     // Activation alone does not thaw a tab inside a hidden window, and a
-    // restored window only renders its active tab — do both.
+    // restored window only renders its active tab — do both. Focus restoration
+    // belongs to withForegroundTab, which owns the whole call.
     await api.tabs.update(tab.id, { active: true });
     const thawed = await waitForThaw(tab.id);
     return hidden ? 'window-restored' : thawed ? 'tab-activated' : 'tab-activate-attempted';
@@ -241,6 +344,10 @@ async function callPage(tabId, method, params, attempt = 0, woken = false) {
       if (name === 'browser_pointer_drag') {
         return engine.pointer({ ...input, type: 'pointerdrag' });
       }
+      if (name === 'browser_workspace_info') return engine.workspaceInfo(input);
+      if (name === 'browser_workspace_select') return engine.workspaceSelect(input);
+      if (name === 'browser_workspace_write') return engine.workspaceWrite(input);
+      if (name === 'browser_workspace_read') return engine.workspaceRead(input);
       throw Object.assign(new Error(`Unsupported page method: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
     },
     args: [method, effective]
@@ -441,6 +548,84 @@ async function image(params) {
   };
 }
 
+// A Google Sheets grid is painted to a canvas, so neither the snapshot nor an
+// injected read can see cell values. The export endpoint renders the same
+// document as CSV and runs in the background with the tab's session cookies,
+// which is the only reliable way to read the sheet's actual contents.
+const MAX_EXPORT_BYTES = 12 * 1024 * 1024;
+
+async function readSheetCsv(params) {
+  const tabId = Number(params.tabId);
+  const tab = await api.tabs.get(tabId);
+  const app = detectWorkspaceApp(tab?.url ?? '');
+  if (!app || app.app !== 'sheets') throw failure('browser_workspace_read needs a Google Sheets tab.');
+  if (!app.id) throw failure('Save the spreadsheet before reading it: the export endpoint needs a document id.');
+  const gid = String(params.gid ?? app.gid ?? '0');
+  if (!/^\d+$/.test(gid)) throw failure(`Invalid sheet id: ${gid}`);
+  const url = `https://docs.google.com/spreadsheets/d/${app.id}/export?format=csv&gid=${gid}`;
+  let response;
+  try {
+    response = await fetch(url, { credentials: 'include' });
+  } catch (error) {
+    throw Object.assign(new Error(`Sheet export failed: ${error?.message ?? url}`), { code: 'TAB_NOT_ACCESSIBLE', retryable: true });
+  }
+  if (!response.ok) throw failure(`Sheet export returned HTTP ${response.status}. Make sure the tab is signed in and the sheet is saved.`);
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  if (buffer.byteLength > MAX_EXPORT_BYTES) {
+    throw failure(`Sheet export exceeds the 12MB limit (${Math.round(buffer.byteLength / 1024)} KB). Read a smaller range.`);
+  }
+  const csv = new TextDecoder('utf-8').decode(buffer);
+  const rows = parseCsv(csv);
+  const range = params.range ? parseA1Range(params.range) : null;
+  if (params.range && !range) throw failure(`Could not parse range "${params.range}". Use A1 notation such as B2 or A1:D20.`);
+  // Some accounts answer the export with an empty body (no error, no rows).
+  // The page adapter can still read a bounded range cell by cell through the
+  // formula bar, so fall through to it instead of reporting an empty sheet.
+  if (rows.length === 0) {
+    // No range was given, so read a conservative window around the active cell
+    // through the formula bar. The caller can pass a bigger range explicitly.
+    return callPage(tabId, 'browser_workspace_read', { ...params, range: params.range ?? 'A1:J50' });
+  }
+  const sliced = sliceRows(rows, range);
+  const size = matrixSize(rows);
+  return redact({
+    app: 'sheets',
+    id: app.id,
+    gid,
+    url: tab.url,
+    source: 'csv-export',
+    range: params.range ?? null,
+    rowCount: size.rowCount,
+    colCount: size.colCount,
+    rows: sliced,
+    truncated: Boolean(range && (sliced.length < rows.length || (sliced[0]?.length ?? 0) < size.colCount))
+  }, tabId);
+}
+
+// Docs renders its body to canvases and keeps only a tiny event-target input in
+// the DOM, so the document text is read from the plain-text export instead. The
+// export needs the same session cookies the tab already carries.
+async function readDocText(params) {
+  const tabId = Number(params.tabId);
+  const tab = await api.tabs.get(tabId);
+  const app = detectWorkspaceApp(tab?.url ?? '');
+  if (!app || app.app !== 'docs') throw failure('browser_workspace_read needs a Google Docs tab.');
+  if (!app.id) throw failure('Save the document before reading it: the export endpoint needs a document id.');
+  const url = `https://docs.google.com/document/d/${app.id}/export?format=txt`;
+  let response;
+  try {
+    response = await fetch(url, { credentials: 'include' });
+  } catch (error) {
+    throw Object.assign(new Error(`Document export failed: ${error?.message ?? url}`), { code: 'TAB_NOT_ACCESSIBLE', retryable: true });
+  }
+  if (!response.ok) throw failure(`Document export returned HTTP ${response.status}. Make sure the tab is signed in and the document is saved.`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_EXPORT_BYTES) throw failure('Document export exceeds the 12MB limit.');
+  // A UTF-8 BOM is prepended by the export; strip it so the first line is clean.
+  const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
+  return redact({ app: 'docs', id: app.id, url: tab.url, source: 'txt-export', text, charCount: text.length }, tabId);
+}
+
 async function cookies(params) {
   const tab = await api.tabs.get(Number(params.tabId));
   const input = params.cookie && typeof params.cookie === 'object' ? params.cookie : {};
@@ -627,10 +812,18 @@ async function visualSnapshot(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload'];
+  const pageMethods = ['browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload', 'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'];
   if (method === 'browser_wait_for') return waitForPage(Number(params.tabId), params);
   if (method === 'browser_snapshot' && params.frames === true) return snapshotFrames(Number(params.tabId), params);
   if (method === 'browser_snapshot' && params.mode === 'visual') return visualSnapshot(params);
+  // Sheets values never reach the DOM, so the CSV export (cookie-authenticated
+  // in the background) answers a sheets read; every other app falls through to
+  // the page adapter.
+  if (method === 'browser_workspace_read' && params.sheets !== false) {
+    const app = detectWorkspaceApp((await tabInfo(Number(params.tabId)))?.url ?? '');
+    if (app?.app === 'sheets' && app.id) return readSheetCsv(params);
+    if (app?.app === 'docs' && app.id) return readDocText(params);
+  }
   if (pageMethods.includes(method)) return callPage(Number(params.tabId), method, params);
   if (method === 'browser_screenshot') return screenshot(params);
   if (method === 'browser_image') return image(params);

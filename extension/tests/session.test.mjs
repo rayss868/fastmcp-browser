@@ -242,6 +242,31 @@ test('openTab reuses a grouped tab the session had not recorded yet', async () =
   assert.equal(tab.id, 55);
 });
 
+test('openTab returns the tab as grouped, not the pre-group create snapshot', async () => {
+  const storage = createStorage();
+  const api = createNativeApi(storage);
+  let nextTabId = 40;
+  api.tabs.create = async properties => {
+    const tab = { id: nextTabId++, url: properties.url, active: properties.active, groupId: -1 };
+    api.alive.add(tab.id);
+    return tab;
+  };
+  // Real Chrome reports groupId -1 on a fresh tab and only fills it in after
+  // tabs.group runs, so the live read is what the model must see.
+  api.tabs.get = async tabId => {
+    for (const [gid, members] of api.groups) {
+      if (members.has(tabId)) return { id: tabId, groupId: gid };
+    }
+    return { id: tabId, groupId: -1 };
+  };
+  const session = createSessionManager({ api, browser: { family: 'chromium', brand: 'Chrome' } });
+
+  const tab = await session.openTab('https://fresh.test');
+
+  assert.notEqual(tab.groupId, -1);
+  assert.equal(api.groups.get(tab.groupId).has(tab.id), true);
+});
+
 test('session persists across manager instances', async () => {
   const storage = createStorage();
   const api = createNativeApi(storage);

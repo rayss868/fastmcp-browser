@@ -8,9 +8,9 @@
 
 **Lightweight MCP server + WebExtension for AI browser automation — no CDP, no debugger, no Playwright.** Your AI drives *your* real browser: same logins, same extensions, every profile.
 
-- **34 MCP tools**, full schema footprint ≈ **10k tokens**
+- **38 MCP tools**, full schema footprint ≈ **10k tokens**
 - **Bridge latency**: median **0.37 ms**, p95 **3.15 ms**, **1,414 req/s** (loopback WebSocket benchmark)
-- **Tests**: server 101/101, extension 240/240, build green for Chromium + Firefox
+- **Tests**: server 109/109, extension 268/268, build green for Chromium + Firefox
 
 ## Teaser
 
@@ -47,7 +47,7 @@ A 30-second walkthrough (1080p): the AI client connects over stdio, the extensio
 2. **No CDP / no `chrome.debugger`** — nothing to attach, nothing for anti-bot layers to see as an automation driver. (Honest caveat: it is still automation on the page — it reduces fingerprints, it is not invisibility.)
 3. **Multi-profile as a first class citizen** — two profiles with the same extension connected at once; `browser_instances` lists them (stable `instanceId`, browser brand, active-tab hint), `browser_use_instance` reroutes the bridge. Playwright MCP needs one process per profile.
 4. **Persistent session model** — tabs join an `Automation` tab group; the session survives across AI runs and keeps `tabIds` reconciled.
-5. **Tiny context cost** — the *entire* 33-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
+5. **Tiny context cost** — the *entire* 38-tool schema is ~10k tokens; snapshots return compact `ref` handles instead of raw DOM.
 6. **Loopback-only bridge** — `127.0.0.1:9229`, token-authenticated. No external endpoints, works behind middleware/AI gateways with no proxy config (a known Playwright MCP HTTP/SSE pain point).
 
 ## Benchmark
@@ -70,7 +70,7 @@ Context vs the wider MCP browser landscape:
 | Metric | FastMCP Browser | @playwright/mcp | Notes / source |
 |---|---:|---:|---|
 | Bridge round-trip (median) | **0.374 ms** | n/a (in-process driver) | our loopback benchmark |
-| Schema footprint (all tools) | **~10k tokens / 34 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
+| Schema footprint (all tools) | **~11k tokens / 38 tools** | substantially larger (30 tools, verbose schemas + docs) | measured via `getToolDefinitions()` |
 | Reported agent-loop token burn | — | **~114k tokens per test run** | community report, Feb 2026 |
 | Browser binaries to install | **0** | 2–3 (Chromium/Firefox/WebKit) | Playwright install weight |
 | Connected profiles | **N (multi-instance)** | 1 per launch | |
@@ -85,7 +85,7 @@ No honest head-to-head end-to-end latency benchmark exists yet between FastMCP a
 │  Claude, etc │                 │  tools → bridge  │   token handshake        │  background SW + content  │
 └──────────────┘                 └──────────────────┘   multi-instance         │  engine (page MAIN world) │
                                     │  bridge.ts        routing + promote      └───────────────────────────┘
-                                    │  tools.ts (34)                                               │
+                                    │  tools.ts (38)                                               │
                                     └─ index.ts (MCP SDK, zod)                                     ▼
                                                                                     chrome.* APIs, NO CDP
 ```
@@ -216,7 +216,7 @@ Steps accept optional annotations — `capture` (name a dataset), `forEach`/`rep
 
 For dynamic sites, don't force the script: the AI can follow `run.jsonl` with the MCP tools and adapt, then re-record to refresh the skill.
 
-## Tool reference (33)
+## Tool reference (38)
 
 | Group | Tools |
 |---|---|
@@ -231,6 +231,18 @@ For dynamic sites, don't force the script: the AI can follow `run.jsonl` with th
 | Upload | `browser_upload` (reads local paths on the host and attaches them natively; `ref` or `selector` optional) |
 | Images | `browser_image` (returns the actual picture so the model can see it — pass `url`, or the `ref`/`selector` of an `<img>` or the label/button wrapping one; reads picture answer choices, diagrams, and charts a snapshot can only name) |
 | Network observe | `browser_network` (live request/response headers and bounded upload metadata; Firefox captures up to 64 KB of text response body per request; no blocking or modification) |
+| **Google Workspace** | `browser_workspace_info` (detects Sheets/Docs/Slides and which editing surface exists), `browser_workspace_select` (Sheets: select an A1 range through the Name Box), `browser_workspace_write` (Sheets: write cells through the formula bar; Docs: write text), `browser_workspace_read` (Sheets: CSV export with a formula-bar fallback; Docs: plain-text export) |
+
+### Google Sheets and Docs (canvas apps)
+
+Google Sheets paints its grid to a `<canvas>` and Google Docs renders its body through an event-target iframe, so a DOM snapshot sees only the toolbar. The workspace tools drive the application's own editing surfaces instead:
+
+1. `browser_workspace_info` tells you which app the tab is and whether the Name Box, formula bar, or Docs target exists.
+2. On Sheets, `browser_workspace_write` types an address like `B2` into the Name Box, commits the value in the formula bar, and reads it back. That is the same path a keyboard user takes, so formulas and formatting behave normally and the edit is saved (verified across a reload).
+3. `browser_workspace_read` fetches the cookie-authenticated CSV export in the background. Some accounts answer that endpoint with an empty body; the tool then reads a bounded range cell by cell through the formula bar (`range` defaults to `A1:J50` in that fallback).
+4. On Docs, reads use the plain-text export and writes go through the document's event-target input.
+
+Reading and writing cells one at a time is slower than an API; prefer passing an explicit `range` and keep it small.
 
 Actions accept either a snapshot `ref` (with `revision`) or a CSS `selector`, re-resolve stale refs automatically, and return a compact DOM diff so a follow-up snapshot is often unnecessary.
 
@@ -384,19 +396,23 @@ Both suites must be green; extension build also runs bundled-syntax and no-CDP i
 ```text
 ├── README.md
 ├── CHANGELOG.md                        # version history (Keep a Changelog)
+├── skills/                             # agent skills (copy into ~/.openclaude/skills/)
+│   ├── using-fastmcp-browser/SKILL.md
+│   ├── automating-google-sheets/SKILL.md
+│   └── automating-google-docs/SKILL.md
 ├── docs/
 │   ├── banner.png                      # README hero
 │   ├── teaser.gif                      # README teaser (10s loop, embeds inline)
 │   ├── fastmcp-browser-promo.mp4       # full teaser (30s, 1080p, with sound)
 │   └── promo-poster.jpg                # poster frame
 ├── server/
-│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (34 registry)
-│   ├── tests/      # 100 tests
+│   ├── src/        # index.ts (MCP), bridge.ts (multi-instance WS), tools.ts (38 registry)
+│   ├── tests/      # 105 tests
 │   └── benchmarks/ # bridge-benchmark.mjs
 └── extension/
     ├── src/        # background SW, session, router, content engine (refs/snapshot/files)
     ├── assets/     # icon.png + icons/ 16-32-48-128
-    ├── tests/      # 240 tests
+    ├── tests/      # 262 tests
     └── dist/       # build output (gitignored): chromium/ + firefox/  ← load these unpacked
 ```
 
