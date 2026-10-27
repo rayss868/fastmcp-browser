@@ -8,7 +8,7 @@ Build archives (Chromium zip, Firefox zip, Firefox xpi) are attached to each
 [GitHub Release](https://github.com/rayss868/fastmcp-browser/releases). This file
 is the source of truth for what changed in each version.
 
-## [Unreleased]
+## [0.7.1] - 2026-10-27
 
 ### Added
 
@@ -483,6 +483,7 @@ is the source of truth for what changed in each version.
 - **0.1.0** (2026-09-23) — first release.
 
 [Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.7.0...HEAD
+[0.7.1]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.7.1
 [0.7.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.7.0
 [0.6.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.6.0
 [0.5.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.5.0

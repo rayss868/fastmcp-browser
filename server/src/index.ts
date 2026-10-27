@@ -22,7 +22,7 @@ function handleControl(name: string, params: Record<string, unknown>): unknown {
 }
 
 const bridge = createBridge(port, undefined, { control: handleControl });
-const server = new McpServer({ name: 'fastmcp-browser', version: '0.6.0' });
+const server = new McpServer({ name: 'fastmcp-browser', version: '0.7.1' });
 
 function toMcpContent(result: unknown): Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
