@@ -108,7 +108,11 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
         );
       }
       if (outcome && typeof outcome === 'object' && outcome.__fastmcpEvalThrew) {
-        throw evaluationError(`Expression threw: ${outcome.message}`);
+        const message = String(outcome.message ?? '');
+        const hint = /unexpected token|syntax error|invalid or unexpected|illegal/i.test(message)
+          ? ' This looks like a JavaScript syntax error in the expression. Keep browser_evaluate expressions small and well-formed — for clicking, filling, or reading use browser_act, browser_click, browser_fill, browser_snapshot format:"digest", or browser_find instead of one big script.'
+          : ' Prefer several small browser_act/browser_click/browser_fill calls over one large browser_evaluate script.';
+        throw evaluationError(`Expression threw: ${message}${hint}`);
       }
       return serialize(outcome ?? null);
     },

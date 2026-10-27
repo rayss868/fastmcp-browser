@@ -8,6 +8,19 @@ Build archives (Chromium zip, Firefox zip, Firefox xpi) are attached to each
 [GitHub Release](https://github.com/rayss868/fastmcp-browser/releases). This file
 is the source of truth for what changed in each version.
 
+## [Unreleased]
+
+### Changed
+
+- **`browser_evaluate` guidance steers agents away from big scripts.** The tool
+  description, schema, and failure message now explicitly say to keep the
+  expression to a handful of lines, to not install helper libraries or wrap a
+  multi-step script in an IIFE, and to use `browser_act`/`browser_click`/
+  `browser_fill` for interactions and `browser_snapshot`/`browser_find`/
+  `browser_inventory` for reads. When an expression throws a syntax error, the
+  error now appends a corrective hint pointing at the built-in tools instead of
+  echoing a bare parse failure.
+
 ## [0.7.1] - 2026-10-27
 
 ### Added
