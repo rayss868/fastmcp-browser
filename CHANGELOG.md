@@ -10,6 +10,33 @@ is the source of truth for what changed in each version.
 
 ## [Unreleased]
 
+### Added
+
+- **Flexible input normalization.** A new server-side layer
+  (`server/src/flexible-input.ts`) accepts loose call shapes and coerces them into
+  the strict schema contract before the call reaches the extension:
+  - Numeric parameters (`tabId`, `revision`, `milliseconds`, `timeoutMs`,
+    `stableMs`, `limit`, `steps`, `clickCount`, pointer `x`/`y`, and the rest) may
+    arrive as strings and are parsed to integers/numbers on the server, so a
+    client that serializes numbers as JSON strings no longer fails validation
+    with `data/tabId must be integer`.
+  - Playwright-style role locators (`button:button:nth-of-type(1)`) are rewritten
+    to plain CSS; genuine CSS pseudo-classes (`:hover`, `:first-child`) and the
+    `text=`/`xpath=`/`host >>> inner` prefixes are left alone.
+  - `browser_act` given a `document.querySelector('…').click()` expression (an
+    easy mistake — `expression` belongs to `browser_evaluate`) is rewritten into a
+    selector-based click; any other expression is rejected with a clear message
+    instead of a confusing schema error.
+
+### Fixed
+
+- **Client-side validation no longer rejects valid calls.** The tool schemas
+  declared numeric fields as integers only, so a client sending
+  `tabId: "63577001"` failed before the request ever reached the server. Every
+  numeric field now accepts `number | string`, and every registered schema is
+  passthrough — unknown keys are not rejected at the client — while the server
+  still validates and rejects bad input deliberately.
+
 ## [0.7.0] - 2026-10-23
 
 ### Added
@@ -455,7 +482,8 @@ is the source of truth for what changed in each version.
   added.
 - **0.1.0** (2026-09-23) — first release.
 
-[Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.7.0
 [0.6.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.6.0
 [0.5.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.5.0
 [0.4.9]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.4.9

@@ -1,4 +1,5 @@
 import type { BrowserBridge } from './bridge.js';
+import { normalizeToolParams } from './flexible-input.js';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { appendStep, normalizeStep } from './record.js';
@@ -382,6 +383,7 @@ function stripFallback(params: Record<string, unknown>): Record<string, unknown>
 
 export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
+  params = normalizeToolParams(name, params);
   if (name === 'browser_instances') return bridge.instances();
   if (name === 'browser_use_instance') {
     const result = bridge.useInstance(String(params.id ?? ''));
