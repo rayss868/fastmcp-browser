@@ -8,7 +8,7 @@ import { startRecording, stopRecording, recordingStatus } from '../dist/src/reco
 
 test('registry exposes only planned tool names', () => {
   assert.deepEqual(getToolDefinitions().map(tool => tool.name), [...TOOL_NAMES]);
-  assert.equal(TOOL_NAMES.length, 38);
+  assert.equal(TOOL_NAMES.length, 39);
 });
 
 test('browser_image reads an image by url or by the ref of an image element', () => {
@@ -365,6 +365,143 @@ test('callBrowserTool browser_upload rejects missing files without forwarding', 
   await assert.rejects(
     callBrowserTool(bridge as never, 'browser_upload', { paths: [join(tmpdir(), 'fastmcp-definitely-missing.txt')] }),
     (error: { code?: string }) => error.code === 'INVALID_ARGUMENT'
+  );
+});
+
+test('browser_run executes a batch of steps sequentially and pins the opened tab', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      return method === 'browser_open' ? { id: 42 } : { ok: true };
+    }
+  };
+
+  const result = await callBrowserTool(bridge as never, 'browser_run', {
+    steps: [
+      { method: 'browser_open', params: { url: 'https://example.com' } },
+      { method: 'browser_snapshot', params: { format: 'digest' } },
+      { method: 'browser_click', params: { selector: 'button' } }
+    ]
+  }) as { ok: boolean; completed: number; results: Array<{ ok: boolean }> };
+
+  assert.equal(result.ok, true);
+  assert.equal(result.completed, 3);
+  assert.deepEqual(result.results.map(step => step.ok), [true, true, true]);
+  assert.deepEqual(calls.map(call => call.method), ['browser_open', 'browser_snapshot', 'browser_click']);
+  assert.equal(calls[1].params.tabId, 42, 'tab-less steps after browser_open must be pinned to the opened tab');
+  assert.equal(calls[2].params.tabId, 42, 'tab-less steps after browser_open must be pinned to the opened tab');
+});
+
+test('browser_run stops at the first failing step by default', async () => {
+  const calls: string[] = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string) => {
+      calls.push(method);
+      if (method === 'browser_click') throw Object.assign(new Error('boom'), { code: 'ELEMENT_NOT_FOUND' });
+      return { ok: true };
+    }
+  };
+
+  const result = await callBrowserTool(bridge as never, 'browser_run', {
+    steps: [
+      { method: 'browser_snapshot', params: { format: 'digest' } },
+      { method: 'browser_click', params: { selector: 'button' } },
+      { method: 'browser_fill', params: { selector: 'input', value: 'x' } }
+    ]
+  }) as { ok: boolean; completed: number; results: Array<{ ok: boolean; error?: { code: string } }> };
+
+  assert.equal(result.ok, false);
+  assert.equal(result.completed, 1);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[0].ok, true);
+  assert.equal(result.results[1].ok, false);
+  assert.equal(result.results[1].error?.code, 'ELEMENT_NOT_FOUND');
+  assert.deepEqual(calls, ['browser_snapshot', 'browser_click'], 'the third step must not run');
+});
+
+test('browser_run runs every step when stopOnError is false', async () => {
+  const calls: string[] = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string) => {
+      calls.push(method);
+      if (method === 'browser_click') throw Object.assign(new Error('boom'), { code: 'ELEMENT_NOT_FOUND' });
+      return { ok: true };
+    }
+  };
+
+  const result = await callBrowserTool(bridge as never, 'browser_run', {
+    steps: [
+      { method: 'browser_click', params: { selector: 'button' } },
+      { method: 'browser_fill', params: { selector: 'input', value: 'x' } }
+    ],
+    stopOnError: false
+  }) as { ok: boolean; completed: number; results: Array<{ ok: boolean }> };
+
+  assert.equal(result.ok, true);
+  assert.equal(result.completed, 2);
+  assert.deepEqual(result.results.map(step => step.ok), [false, true]);
+  assert.deepEqual(calls, ['browser_click', 'browser_fill']);
+});
+
+test('browser_run forwards top-level browser/profile routing into every step', async () => {
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const bridge = {
+    token: 'test-token',
+    close: async () => undefined,
+    request: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      return { ok: true };
+    }
+  };
+
+  await callBrowserTool(bridge as never, 'browser_run', {
+    browser: 'Chrome',
+    profile: 'i-abc',
+    steps: [
+      { method: 'browser_snapshot', params: { format: 'digest' } },
+      { method: 'browser_click', params: { selector: 'button', profile: 'i-own' } }
+    ]
+  });
+
+  assert.equal(calls[0].params.browser, 'Chrome');
+  assert.equal(calls[0].params.profile, 'i-abc');
+  assert.equal(calls[1].params.profile, 'i-own', 'a step-level profile must win over the batch default');
+});
+
+test('browser_run documents its result shape and non-throwing failure mode', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const run = byName.get('browser_run')!;
+  assert.match(run.description, /results/);
+  assert.match(run.description, /does not throw/i);
+  assert.match(run.description, /completed/);
+});
+
+test('browser_run steers the model away from exploratory and heavy-snapshot batches', () => {
+  const byName = new Map(getToolDefinitions().map(tool => [tool.name, tool]));
+  const run = byName.get('browser_run')!;
+  assert.match(run.description, /When to use it/i);
+  assert.match(run.description, /When NOT to use it/i);
+  assert.match(run.description, /exploratory/i);
+  assert.match(run.description, /format:"markdown"/);
+  assert.match(run.description, /Split into a snapshot batch/i);
+});
+
+test('browser_run rejects an unknown or nested method before acting', async () => {
+  const bridge = { token: 'test-token', close: async () => undefined, request: async () => ({ ok: true }) };
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_run', { steps: [{ method: 'browser_nope', params: {} }] }),
+    /unknown tool method/
+  );
+  await assert.rejects(
+    callBrowserTool(bridge as never, 'browser_run', { steps: [{ method: 'browser_run', params: {} }] }),
+    /must not nest/
   );
 });
 

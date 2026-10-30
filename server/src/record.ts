@@ -55,7 +55,6 @@ export function normalizeStep(method: string, params: Record<string, unknown>): 
       }
     }
   }
-
   const step: RecordedStep = { method, params: clean, replayable };
   if (!replayable) {
     const advice = REQUIRES_TAB.has(method)

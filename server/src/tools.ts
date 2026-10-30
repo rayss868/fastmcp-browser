@@ -55,7 +55,7 @@ type Tool = { name: string; description: string; inputSchema: JsonSchema };
 export const TOOL_NAMES = [
   'browser_connect', 'browser_status', 'browser_tabs', 'browser_open', 'browser_close', 'browser_focus',
   'browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_pointer_move', 'browser_pointer_click',
-  'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_act', 'browser_scroll',
+  'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_act', 'browser_run', 'browser_scroll',
   'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_image', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
   'browser_storage', 'browser_evaluate', 'browser_inspect', 'browser_instances', 'browser_use_instance', 'browser_disconnect',
   'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'
@@ -80,6 +80,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_select: 'Choose an option on a native select or an ARIA combobox/listbox (MUI Autocomplete, React Select, custom listboxes) targeted by ref (with optional revision) or selector: pass the option value or visible label; for non-native controls the listbox is opened and the matching role="option" is clicked.',
   browser_fill_form: 'Fill multiple form fields in one call instead of one browser_fill per field: pass fields as ref/value or selector/value pairs, and an optional submit ref (or submitSelector) to click afterward. Prefer this over clicking each field first — everything happens in a single call, so there is no gap between calls for a stray user click to move the caret and misfile a value. Each field is re-resolved against the live DOM, so a rerender between fields is recovered automatically. Inputs, textareas, contenteditable, native selects, ARIA comboboxes, and checkboxes/radios are handled by element type; every field reports its own success or error so a single bad target does not waste the whole call. The response carries a compact DOM diff.',
   browser_act: 'One call that finds the target, acts, waits for the DOM to settle, then reports whether anything changed plus a compact diff and the element new ref — so a follow-up snapshot is usually unnecessary. Pass action (click, fill, type, press, select, hover) with a target ref or selector; stale refs are re-resolved automatically. Set waitAfter:false to skip the settle wait, or waitState:"network_idle" when the effect is network-driven. The response carries refs for every element that appeared or changed, so you can act on them without re-snapshotting. refresh defaults to "auto": a compact post-action snapshot is attached whenever the page navigated, the target disappeared, or the diff shows a large rerender; use "digest" to always attach the light interactive-control digest (the cheapest way to see the post-action state), "snapshot" for a full one, "none" for refs only. The response also carries target (the acted-on element read back: role, name, value, checked, disabled) and, when the target sits in a form, form (its named field values, hidden inputs included) — so you can confirm the answer actually landed instead of trusting changed:true, which a hidden input never sets.',
+  browser_run: 'Run a list of browser tool calls in one request. Pass steps as an ordered array of { method, params }, where method is any browser_* tool (browser_click, browser_fill, browser_act, browser_snapshot, browser_wait_for, and so on); the server executes them sequentially against the live tab, so a whole multi-step workflow lands in a single round-trip. Refs and selectors inside each step must come from the latest browser_snapshot digest, and a browser_open step auto-pins later tab-less steps to the tab it returned, so the batch stays on the right page; pass browser/profile at the top level to route the whole batch to one instance. Returns { ok, completed, results }, where results[index] is { index, method, ok, result } or { index, method, ok:false, error:{code,message} }. A failing step does not throw: with stopOnError:true (default) the batch halts and returns ok:false with completed set to the number of steps that ran, so inspect results rather than expecting an exception; with stopOnError:false every step runs and is reported. Each step is recorded individually to the active run file. browser_run must not nest another browser_run. When to use it: a workflow whose steps are already known (open page, fill a fixed form, publish N items of the same shape, click A then B then C) — saves one round-trip per step. When NOT to use it: exploratory navigation, or any batch that mixes a heavy browser_snapshot format:"markdown" step with light actions — the heavy response dominates the batch payload and the model cannot adapt mid-batch. Split into a snapshot batch and an action batch in that case.',
   browser_find: 'Search the current page for text or a regular expression and return only the matching elements with their ref plus a short ancestor path — far cheaper than a snapshot when you need one element on a large page. Pass exactly one of text (case-insensitive substring) or regex, plus a small limit; matches carry refs usable by any action tool.',
   browser_inspect: 'Read the framework state behind an element by ref or selector, resolved in the page MAIN world: returns the tag, the controlling React/Vue/Angular marker, up to 10 enclosing React component names, and the React props. Pass path to read one property of the element (e.g. "props.children"). A selector skips the ref store entirely, so it also works on pages whose CSP blocks browser_evaluate and on DOMs that rerender constantly. Use it to understand what a control represents, not to act.',
   browser_scroll: 'Scroll the page of the given tab. Prefer a target over a guess: pass ref or selector (optionally with intoView:true) and the element is scrolled to the middle of the viewport, using its nearest scrollable container — many pages (LinkedIn, chat apps) scroll inside a container, not the window, so a window y-delta moves nothing. With x/y deltas the window is scrolled first; if it cannot move, the largest scrollable container is scrolled instead. The result always reports moved (did anything actually scroll), container (which element was scrolled, when it was not the window), hint (what to do when moved is false), and geometry { scrollY, viewportHeight, pageHeight, belowFold } — belowFold:true means content still waits off-screen, typically because a lazy-loaded section has not rendered yet; scroll toward it and re-read instead of repeating the same delta.',
@@ -213,6 +214,18 @@ const schemas: Record<string, JsonSchema> = {
     stableMs: { type: 'integer', minimum: 50, maximum: 5000, description: 'Quiet window for dom_stable/network_idle (default 150).' },
     refresh: { type: 'string', enum: ['auto', 'snapshot', 'digest', 'none'], description: 'Post-action page state: "auto" (default) attaches a compact snapshot only when the page navigated, the target disappeared, or the diff shows a large rerender; "snapshot" always attaches one; "digest" attaches the light interactive-control digest so you see the new state without a full snapshot; "none" returns refs only.' }
   }, ['action']),
+  browser_run: object({
+    steps: {
+      type: 'array',
+      minItems: 1,
+      description: 'Ordered list of browser tool calls to run sequentially in one request; each step is { method, params } where method is a browser_* tool name and params is its argument object.',
+      items: object({
+        method: { type: 'string', description: 'Browser tool method to run, e.g. browser_click, browser_fill, browser_act, browser_snapshot, browser_wait_for.' },
+        params: { type: 'object', description: 'Arguments for that tool call, as documented on the individual tool.' }
+      }, ['method'])
+    },
+    stopOnError: { type: 'boolean', description: 'Stop the batch at the first failing step (default true). Set false to run every step and report per-step success/failure.' }
+  }, ['steps']),
   browser_find: object({
     tabId: TAB_ID,
     text: { type: 'string', description: 'Case-insensitive substring to look for. Provide exactly one of text or regex.' },
@@ -314,6 +327,7 @@ function timeoutFor(name: string, params: Record<string, unknown>): number {
   if (name === 'browser_image') return 30000;
   if (name === 'browser_evaluate') return 30000;
   if (name === 'browser_act') return Math.min(120000, Number(params.timeoutMs ?? 3000) + 15000);
+  if (name === 'browser_run') return 180000;
   if (name === 'browser_workspace_write') return 120000;
   if (name === 'browser_workspace_read') return 45000;
   return 15000;
@@ -381,6 +395,26 @@ function stripFallback(params: Record<string, unknown>): Record<string, unknown>
   return rest;
 }
 
+// browser_run executes a batch of browser tool calls sequentially. The
+// tab-pinning helpers mirror replay.ts but live here to avoid a tools↔replay
+// import cycle: after a browser_open, later tab-less steps are pinned to the
+// tab it returned so a batch keeps acting on the right page.
+const RUN_TABLESS_METHODS = new Set([
+  'browser_connect', 'browser_status', 'browser_disconnect', 'browser_tabs', 'browser_open',
+  'browser_close', 'browser_focus', 'browser_instances', 'browser_use_instance', 'browser_run'
+]);
+
+function runOpenedTab(method: string, result: unknown): number | undefined {
+  if (method !== 'browser_open' || result === null || typeof result !== 'object') return undefined;
+  const id = (result as { id?: unknown }).id;
+  return typeof id === 'number' && Number.isInteger(id) ? id : undefined;
+}
+
+function pinRunTab(method: string, params: Record<string, unknown>, tabId: number | undefined): Record<string, unknown> {
+  if (tabId === undefined || RUN_TABLESS_METHODS.has(method) || params.tabId !== undefined) return params;
+  return { ...params, tabId };
+}
+
 export async function callBrowserTool(bridge: BrowserBridge, name: string, params: Record<string, unknown>): Promise<unknown> {
   if (!TOOL_NAMES.includes(name as typeof TOOL_NAMES[number])) throw Object.assign(new Error(`Unknown tool: ${name}`), { code: 'INVALID_ARGUMENT' });
   params = normalizeToolParams(name, params);
@@ -407,6 +441,41 @@ export async function callBrowserTool(bridge: BrowserBridge, name: string, param
     const result = await bridge.request(name, { ...rest, files: await readUploadFiles(paths as string[]) }, timeoutFor(name, params));
     maybeRecord(name, params);
     return result;
+  }
+  if (name === 'browser_run') {
+    const steps = Array.isArray(params.steps) ? params.steps : [];
+    const stopOnError = params.stopOnError !== false;
+    // Top-level browser/profile select the instance for the whole batch; each
+    // step inherits it unless that step names its own.
+    const route: Record<string, unknown> = {};
+    for (const key of ['browser', 'profile'] as const) {
+      if (typeof params[key] === 'string' && params[key]) route[key] = params[key];
+    }
+    const results: Array<Record<string, unknown>> = [];
+    let pinnedTab: number | undefined;
+    for (let index = 0; index < steps.length; index++) {
+      const raw = steps[index] as { method?: unknown; params?: unknown } | undefined;
+      const method = typeof raw?.method === 'string' ? raw.method : '';
+      if (!TOOL_NAMES.includes(method as (typeof TOOL_NAMES)[number])) {
+        throw Object.assign(new Error(`browser_run step ${index + 1} has an unknown tool method ${JSON.stringify(method)}`), { code: 'INVALID_ARGUMENT', retryable: false });
+      }
+      if (method === 'browser_run') {
+        throw Object.assign(new Error('browser_run steps must not nest another browser_run'), { code: 'INVALID_ARGUMENT', retryable: false });
+      }
+      const stepParams = raw && typeof raw.params === 'object' && raw.params !== null && !Array.isArray(raw.params)
+        ? raw.params as Record<string, unknown>
+        : {};
+      try {
+        const result = await callBrowserTool(bridge, method as (typeof TOOL_NAMES)[number], pinRunTab(method, { ...route, ...stepParams }, pinnedTab));
+        pinnedTab = runOpenedTab(method, result) ?? pinnedTab;
+        results.push({ index, method, ok: true, result });
+      } catch (error) {
+        const err = error as { code?: string; message?: string };
+        results.push({ index, method, ok: false, error: { code: err.code ?? 'ACTION_TIMEOUT', message: err.message ?? String(error) } });
+        if (stopOnError) return { ok: false, completed: index, results };
+      }
+    }
+    return { ok: true, completed: steps.length, results };
   }
   const result = await requestWithRecovery(bridge, name, params);
   maybeRecord(name, params);

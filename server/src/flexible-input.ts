@@ -48,16 +48,27 @@ export function normalizeSelector(selector: string): string {
 }
 
 const INT_FIELDS = new Set([
-  'tabId', 'revision', 'buttons', 'clickCount', 'steps', 'maxDepth', 'limit',
+  'tabId', 'revision', 'buttons', 'clickCount', 'maxDepth', 'limit',
   'maxChars', 'maxNameChars', 'outlineLimit', 'timeoutMs', 'stableMs',
   'milliseconds', 'maxRows', 'maxCols'
 ]);
+// `steps` is an integer on browser_pointer_drag but an array of tool calls on
+// browser_run, so it cannot be in the unconditional set above.
+const STEP_COUNT_METHODS = new Set(['browser_pointer_drag']);
 const FLOAT_FIELDS = new Set(['x', 'y']);
 const ACT_EXPRESSION_RE = /document\.querySelector\((['"])(.*?)\1\)\s*[?.]*\s*(?:[a-z_$][a-z0-9_$]*\s*)?\(\s*\)\s*;?\s*$/i;
 
 export function normalizeToolParams(name: string, params: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(params)) {
+    if (key === 'steps' && STEP_COUNT_METHODS.has(name)) {
+      const n = coerceInteger(value);
+      if (n === undefined) {
+        throw Object.assign(new Error(`${name}: ${key} must be an integer, got ${typeof value === 'string' ? JSON.stringify(value) : String(value)}`), { code: 'INVALID_ARGUMENT', retryable: false });
+      }
+      out[key] = n;
+      continue;
+    }
     if (INT_FIELDS.has(key) || FLOAT_FIELDS.has(key)) {
       if (value === undefined || value === null) {
         out[key] = value;

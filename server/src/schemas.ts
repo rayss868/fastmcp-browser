@@ -98,6 +98,13 @@ export const zodSchemas: Record<string, z.ZodObject<any, any, any>> = {
     stableMs: z.union([z.number().int().min(50).max(5000), z.string()]).optional().describe('Quiet window for dom_stable/network_idle (default 150).'),
     refresh: z.enum(['auto', 'snapshot', 'digest', 'none']).optional().describe('Post-action page state: "auto" (default) attaches a compact snapshot only when the page moved; "snapshot" always attaches one; "digest" attaches the light interactive-control digest; "none" returns refs only.')
   }),
+  browser_run: z.object({
+    steps: z.array(z.object({
+      method: z.string().describe('Browser tool method to run, e.g. browser_click, browser_fill, browser_act, browser_snapshot, browser_wait_for.'),
+      params: z.record(z.unknown()).optional().describe('Arguments for that tool call, as documented on the individual tool.')
+    })).min(1).describe('Ordered list of browser tool calls to run sequentially in one request; each step is { method, params }.'),
+    stopOnError: z.boolean().optional().describe('Stop the batch at the first failing step (default true). Set false to run every step and report per-step success/failure.')
+  }),
   browser_inspect: z.object({ tabId, ref, revision, path: z.string().optional().describe('Optional dot-path read from the resolved element (e.g. "props.children").'), selector: z.string().optional().describe('CSS selector alternative to ref; resolved fresh on every call so rerenders cannot make it stale. Works on CSP-restricted pages where browser_evaluate cannot run.') }),
   browser_scroll: z.object({
     tabId,

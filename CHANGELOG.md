@@ -10,6 +10,42 @@ is the source of truth for what changed in each version.
 
 ## [Unreleased]
 
+### Added
+
+- **`browser_run` executes a batch of browser calls in one request (39th tool).**
+  Pass `steps` as an ordered array of `{ method, params }` where `method` is any
+  registered browser tool (`browser_click`, `browser_fill`, `browser_act`,
+  `browser_snapshot`, `browser_wait_for`, etc.), and the server executes them
+  sequentially against the active tab:
+  - **Single round-trip multi-step workflow:** Runs full form fills, multi-action
+    sequences, or repetitive submissions without paying an MCP client round-trip
+    per action.
+  - **Tab pinning across navigations:** If a step runs `browser_open`, subsequent
+    tab-less steps in the batch automatically pin to the opened tab ID so the
+    sequence never strays to an unrelated tab.
+  - **Multi-instance routing inheritance:** Top-level `browser` and `profile`
+    parameters are automatically propagated into each step unless a step explicitly
+    overrides them with its own target.
+  - **Structured non-throwing results:** Returns `{ ok, completed, results }`,
+    where `results[i]` is either `{ index, method, ok: true, result }` or
+    `{ index, method, ok: false, error: { code, message } }`. With `stopOnError: true`
+    (default), the batch halts at the first failing step and returns `ok: false`
+    with `completed` count; with `stopOnError: false`, every step executes and is
+    reported.
+  - **Agent guidance:** Tool documentation and the `using-fastmcp-browser` skill
+    explicitly advise agents when to use batching (known workflows, form filling,
+    repetitive item publishing) and when to avoid it (exploratory navigation where
+    intermediate state dictates next actions, or mixing heavy `format: "markdown"`
+    snapshots with light actions).
+  - **Safety guards:** `browser_run` cannot nest another `browser_run` (rejected
+    with `INVALID_ARGUMENT`). Each executed sub-step is recorded individually to
+    the active run file (`FASTMCP_RECORD`).
+  - **Schema & input handling:** `server/src/flexible-input.ts` was updated so
+    the `steps` array on `browser_run` is not coerced to an integer like
+    `browser_pointer_drag.steps`. Zod and JSON schemas were added to keep
+    `schema-sync.test.ts` passing. Tool count updated to 39 across `README.md`
+    and test suites.
+
 ### Changed
 
 - **`browser_evaluate` guidance steers agents away from big scripts.** The tool

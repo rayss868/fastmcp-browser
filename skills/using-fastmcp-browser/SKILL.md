@@ -59,6 +59,15 @@ the most relevant end instead of DOM order.
   with `waitState: "network_idle"` is the reliable follow-up.
 - `browser_fill_form` fills many fields in one call and re-resolves each field,
   so a rerender between fields does not waste the batch.
+- `browser_run` runs an ordered list of `{ method, params }` steps in one
+  request — use it when a workflow is already known (open, snapshot, fill,
+  click, wait) instead of issuing one round-trip per action. A failing step
+  returns `ok:false` in `results` rather than throwing, so check `results`.
+  Skip it for exploratory navigation (the model needs to see each step's
+  outcome before deciding the next) and for batches that mix a heavy
+  `browser_snapshot` `format:"markdown"` step with light actions — split those
+  into a snapshot batch and an action batch so the heavy response does not
+  dominate the payload.
 
 ## Waiting
 
