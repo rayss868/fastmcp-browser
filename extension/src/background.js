@@ -348,6 +348,7 @@ async function callPage(tabId, method, params, attempt = 0, woken = false) {
       if (name === 'browser_workspace_select') return engine.workspaceSelect(input);
       if (name === 'browser_workspace_write') return engine.workspaceWrite(input);
       if (name === 'browser_workspace_read') return engine.workspaceRead(input);
+      if (name === 'browser_state') return engine.pageState(input);
       throw Object.assign(new Error(`Unsupported page method: ${name}`), { code: 'UNSUPPORTED_CAPABILITY' });
     },
     args: [method, effective]

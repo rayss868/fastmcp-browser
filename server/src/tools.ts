@@ -58,7 +58,7 @@ export const TOOL_NAMES = [
   'browser_pointer_drag', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_act', 'browser_run', 'browser_scroll',
   'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_image', 'browser_upload', 'browser_network', 'browser_download', 'browser_cookies',
   'browser_storage', 'browser_evaluate', 'browser_inspect', 'browser_instances', 'browser_use_instance', 'browser_disconnect',
-  'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'
+  'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read', 'browser_state'
 ] as const;
 
 export const TOOL_DOCS: Record<string, string> = {
@@ -98,6 +98,7 @@ export const TOOL_DOCS: Record<string, string> = {
   browser_use_instance: 'Switch the bridge to a different connected extension instance (browser profile) so subsequent tab and snapshot commands target that browser session.',
   browser_disconnect: 'Close the WebSocket bridge connection from the extension to this server.',
   browser_workspace_info: 'Detect whether the tab is a Google Workspace app (Sheets, Docs, Slides) and report which editing surface is available. Google Sheets paints its grid to a canvas and Google Docs renders text through an event-target iframe, so browser_snapshot sees almost nothing there; call this first to learn which workspace tool applies before reading or writing. Then load the matching project skill: automating-google-sheets for Sheets, automating-google-docs for Docs. Returns app, document id, sheet gid, and booleans for canvas/nameBox/formulaBar/docsTarget.',
+  browser_state: 'Return a compact summary of what the agent has already done on this page: snapshot revision/age, scroll position, captured form values, and a bounded action history (last 20 actions with success/failure). Use this between snapshots to answer "where am I?" and "what have I accomplished?" without re-reading the page. Call it after a sequence of actions, or whenever the agent needs context to decide the next step without a fresh snapshot.',
   browser_workspace_select: 'Google Sheets only: move the cell selection in the given tab by typing an A1 range into the Name Box and pressing Enter (e.g. "B2" or "A1:D5"). This is the deterministic way into a canvas grid — no pixel guessing. Returns the selected range and the formula bar value.',
   browser_workspace_write: 'Write into a Google Workspace document in the given tab through the app\'s own editing surfaces instead of the canvas. On Sheets, pass range (A1 notation) plus either value (one cell/formula) or values (a 2D array or TSV string, written cell by cell); the Name Box selects the target and the formula bar commits each edit, so formulas and formatting behave like a typed edit. On Docs, pass value to replace the document body (set replace:false to append at the caret). Returns what was written plus the read-back state.',
   browser_workspace_read: 'Read a Google Workspace document that the DOM snapshot cannot see. On Sheets the CSV export is fetched in the background with the tab\'s session cookies and parsed into rows; when that export returns an empty body (some accounts) the grid is read cell by cell through the Name Box and formula bar for a bounded range (default A1:J50). Pass range in A1 notation to slice either path, e.g. "A1:D20". On Docs the plain-text export is fetched the same way, because the body itself is canvas-rendered. Returns rows with rowCount/colCount and a source field, or the document text.'
@@ -290,7 +291,8 @@ const schemas: Record<string, JsonSchema> = {
     sheets: { type: 'boolean', description: 'Set false to skip the CSV export path and read the page surface instead.' },
     maxRows: { type: 'integer', minimum: 1, maximum: 1000, description: 'Formula-bar fallback: maximum rows to walk (default 200).' },
     maxCols: { type: 'integer', minimum: 1, maximum: 200, description: 'Formula-bar fallback: maximum columns to walk (default 50).' }
-  })
+  }),
+  browser_state: object({})
 };
 
 const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);

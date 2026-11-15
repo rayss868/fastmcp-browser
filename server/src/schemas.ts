@@ -154,7 +154,8 @@ export const zodSchemas: Record<string, z.ZodObject<any, any, any>> = {
     sheets: z.boolean().optional().describe('Set false to skip the CSV export path and read the page surface instead.'),
     maxRows: z.union([z.number().int().min(1).max(1000), z.string()]).optional().describe('Formula-bar fallback: maximum rows to walk (default 200).'),
     maxCols: z.union([z.number().int().min(1).max(200), z.string()]).optional().describe('Formula-bar fallback: maximum columns to walk (default 50).')
-  })
+  }),
+  browser_state: z.object({})
 };
 
 const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);

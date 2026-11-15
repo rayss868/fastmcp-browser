@@ -8,6 +8,7 @@ import { decodeFileEntries } from './files.js';
 import { summarizeResources } from './network.js';
 import { computeDiff, shouldRefresh } from './diff.js';
 import { createWorkspaceAdapter } from './workspace.js';
+import { createPageStateStore } from './state.js';
 
 // The content script is re-injected at the start of every MCP call. Reuse the
 // surface from a previous injection so a ref from an earlier snapshot stays
@@ -25,6 +26,7 @@ const state = surface?.state ?? {
   get revision() { return refs.revision; },
   refs,
   recovered: false,
+  pageStore: createPageStateStore(),
   lastCatalog: null,
   lastSnapshotItems: null,
   lastDigest: null,
@@ -534,6 +536,12 @@ function snapshot(input = {}) {
     state.lastSnapshotItems = state.lastCatalog;
   }
   result.geometry = pageGeometry();
+  state.pageStore?.noteSnapshot({
+    url: location.href,
+    revision: state.revision,
+    controlCount: result.elementCount ?? result.elements?.length ?? 0,
+    title: document.title
+  });
   // Few elements in top frame + iframes present → the UI likely renders inside
   // an iframe; tell the caller to retry with frames: true instead of leaving
   // them with a near-empty tree and no explanation.
@@ -938,6 +946,7 @@ async function act(input = {}) {
   if (state.recovered) { result.recovered = true; state.recovered = false; }
   if (refreshed) result.snapshot = refreshed;
   if (digestState) result.digest = digestState;
+  state.pageStore?.recordAction(`browser_${action}`, nextRef ?? input.ref ?? null, changed === true, form?.reason ?? null);
   return result;
 }
 
@@ -1025,6 +1034,7 @@ function scroll(input = {}) {
   const result = { x: window.scrollX, y: window.scrollY, moved, geometry: pageGeometry(), revision: state.revision };
   if (container) result.container = true;
   if (hint) result.hint = hint;
+  state.pageStore?.noteScroll(result.x, result.y);
   return result;
 }
 function pointer(input) {
@@ -1107,7 +1117,14 @@ function network(input = {}) {
   return { url: location.href, resources: summarizeResources(entries, Number(input.limit) || 0) };
 }
 
-window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, imageSource, scroll, pointer, upload, network, workspaceInfo, workspaceSelect, workspaceWrite, workspaceRead, stealth: stealthLayer, stealthConfig, state };
+// Compact progress summary: where the agent is, what it has done, and which
+// form values it already committed. Bounded by the store, so this stays cheap
+// for the model even after a long multi-step session.
+function pageState() {
+  return { url: location.href, title: document.title, revision: state.revision, ...state.pageStore.summary() };
+}
+
+window.__fastMcp = { snapshot, inventory, catalog: discovery.catalog, catalogEntries: discovery.catalogEntries, find, resolve, locate, targetOf, applySelect, actionClick, fill, fillForm, press, select, wait, waitFor, act, digest, screenshotTarget, imageSource, scroll, pointer, upload, network, workspaceInfo, workspaceSelect, workspaceWrite, workspaceRead, pageState, stealth: stealthLayer, stealthConfig, state };
 if (!state.observer) {
   // Re-injection would otherwise stack one observer per MCP call.
   state.observer = new MutationObserver(() => {
