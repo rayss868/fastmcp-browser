@@ -292,7 +292,7 @@ const schemas: Record<string, JsonSchema> = {
     maxRows: { type: 'integer', minimum: 1, maximum: 1000, description: 'Formula-bar fallback: maximum rows to walk (default 200).' },
     maxCols: { type: 'integer', minimum: 1, maximum: 200, description: 'Formula-bar fallback: maximum columns to walk (default 50).' }
   }),
-  browser_state: object({})
+  browser_state: object({ tabId: TAB_ID })
 };
 
 const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);
@@ -319,7 +319,7 @@ export function registerBrowserTools(bridge: BrowserBridge): Tool[] {
 const READ_ONLY_METHODS = new Set([
   'browser_snapshot', 'browser_find', 'browser_inventory', 'browser_status', 'browser_tabs', 'browser_inspect',
   'browser_network', 'browser_evaluate', 'browser_wait', 'browser_wait_for', 'browser_screenshot', 'browser_image',
-  'browser_workspace_info', 'browser_workspace_read'
+  'browser_workspace_info', 'browser_workspace_read', 'browser_state'
 ]);
 
 function timeoutFor(name: string, params: Record<string, unknown>): number {

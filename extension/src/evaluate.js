@@ -74,7 +74,19 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
           // Probe first so the caller gets an actionable error instead of a null.
           world: 'MAIN',
           func: (expr, attr, tokenArg, bindElement) => {
-            const element = bindElement && tokenArg ? document.querySelector(`[${attr}="${tokenArg}"]`) : null;
+            const findInOpenShadowRoots = selector => {
+              const roots = [document];
+              for (let index = 0; index < roots.length && index < 50000; index += 1) {
+                const root = roots[index];
+                const match = root.querySelector(selector);
+                if (match) return match;
+                for (const host of root.querySelectorAll('*')) {
+                  if (host.shadowRoot && roots.length < 50000) roots.push(host.shadowRoot);
+                }
+              }
+              return null;
+            };
+            const element = bindElement && tokenArg ? findInOpenShadowRoots(`[${attr}="${tokenArg}"]`) : null;
             try {
               try {
                 eval('0');
@@ -134,8 +146,20 @@ export function createPageEvaluator({ scripting, inject, attribute = REF_ATTRIBU
           // on pages whose DOM churns or whose CSP forbids eval -- the two cases that
           // together made every ref-based read on such pages fail.
           func: (attr, tokenArg, bindElement, pathArg, selectorArg) => {
+            const findInOpenShadowRoots = selector => {
+              const roots = [document];
+              for (let index = 0; index < roots.length && index < 50000; index += 1) {
+                const root = roots[index];
+                const match = root.querySelector(selector);
+                if (match) return match;
+                for (const host of root.querySelectorAll('*')) {
+                  if (host.shadowRoot && roots.length < 50000) roots.push(host.shadowRoot);
+                }
+              }
+              return null;
+            };
             const element = bindElement && tokenArg
-              ? document.querySelector(`[${attr}="${tokenArg}"]`)
+              ? findInOpenShadowRoots(`[${attr}="${tokenArg}"]`)
               : (selectorArg ? document.querySelector(selectorArg) : null);
             try {
               if (!element) return { ok: false, error: selectorArg ? 'No element matches the selector.' : 'No element bound; pass a ref or selector.' };

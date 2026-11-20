@@ -155,7 +155,7 @@ export const zodSchemas: Record<string, z.ZodObject<any, any, any>> = {
     maxRows: z.union([z.number().int().min(1).max(1000), z.string()]).optional().describe('Formula-bar fallback: maximum rows to walk (default 200).'),
     maxCols: z.union([z.number().int().min(1).max(200), z.string()]).optional().describe('Formula-bar fallback: maximum columns to walk (default 50).')
   }),
-  browser_state: z.object({})
+  browser_state: z.object({ tabId })
 };
 
 const ROUTING_EXEMPT = new Set<string>(['browser_instances', 'browser_use_instance']);

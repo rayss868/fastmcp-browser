@@ -20,7 +20,8 @@ const PAGE_METHODS = new Set([
   'browser_workspace_info',
   'browser_workspace_select',
   'browser_workspace_write',
-  'browser_workspace_read'
+  'browser_workspace_read',
+  'browser_state'
 ]);
 
 const TAB_METHODS = new Set([

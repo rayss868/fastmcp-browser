@@ -37,6 +37,7 @@ const state = surface?.state ?? {
   digestCalledAt: 0,
   digestInvalidated: false
 };
+if (!state.pageStore) state.pageStore = createPageStateStore();
 
 const pointerController = createPointerController({
   documentRef: document,
@@ -688,10 +689,17 @@ function clickTarget(element) {
   return element;
 }
 
-async function actionClick(input = {}) { const element = clickTarget(targetOf(input)); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await actionability.ensureActionable(element, 'click'); await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } return finish({ changed: true, url: location.href }); }
-async function fill(input = {}, value, stealth = false) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (stealth) { await actionability.ensureActionable(element, 'fill'); await setValueStealth(element, value, stealthConfig(stealth)); } else { setValue(element, value); } return finish({ changed: true }); }
-async function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); await delay(30 + Math.random() * 70); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } else { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } return finish({ changed: true }); }
-async function select(input = {}, value) { const element = targetOf(input); return finish({ changed: true, value: await applySelect(element, String(value)) }); }
+function noteFormFor(element) {
+  const form = element?.form ?? element?.closest?.('form') ?? null;
+  if (!form) return;
+  const label = form.getAttribute?.('aria-label') || form.getAttribute?.('name') || form.id || 'form';
+  state.pageStore.captureForm(form, label);
+}
+
+async function actionClick(input = {}) { const element = clickTarget(targetOf(input)); if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { await actionability.ensureActionable(element, 'click'); await pointerController.click({ ref: input.ref, selector: input.selector, revision: input.revision, stealth: true }); } else { element.click(); } state.pageStore.recordAction('browser_click', input.ref ?? input.selector ?? null, true); return finish({ changed: true, url: location.href }); }
+async function fill(input = {}, value, stealth = false) { const element = targetOf(input); if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (stealth) { await actionability.ensureActionable(element, 'fill'); await setValueStealth(element, value, stealthConfig(stealth)); } else { setValue(element, value); } noteFormFor(element); state.pageStore.recordAction('browser_fill', input.ref ?? input.selector ?? null, true); return finish({ changed: true }); }
+async function press(input = {}) { const key = input.key; const element = input.ref || input.selector ? targetOf(input) : document.activeElement; if (!(element instanceof HTMLElement)) throw Object.assign(new Error('ELEMENT_NOT_INTERACTIVE'), { code: 'ELEMENT_NOT_INTERACTIVE' }); if (input.stealth) { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); await delay(30 + Math.random() * 70); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } else { element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })); element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })); } state.pageStore.recordAction('browser_press', input.ref ?? input.selector ?? key ?? null, true); return finish({ changed: true }); }
+async function select(input = {}, value) { const element = targetOf(input); const selected = await applySelect(element, String(value)); noteFormFor(element); state.pageStore.recordAction('browser_select', input.ref ?? input.selector ?? null, true); return finish({ changed: true, value: selected }); }
 function fieldTarget(field, revision) {
   if (typeof field?.selector === 'string' && field.selector) {
     const element = resolveSelector(field.selector);
@@ -730,6 +738,7 @@ async function fillForm(input = {}) {
       } else {
         setValue(element, value == null ? '' : String(value));
       }
+      noteFormFor(element);
       results.push({ ...target, ok: true });
     } catch (error) {
       results.push({ ...target, ok: false, error: error?.message ?? String(error) });
@@ -748,7 +757,9 @@ async function fillForm(input = {}) {
       results.push({ ref: input.submit ?? null, submit: true, ok: false, error: error?.message ?? String(error) });
     }
   }
-  return finish({ filled: results.filter(item => item.ok).length, fields: results, submitted });
+  const filled = results.filter(item => item.ok).length;
+  state.pageStore.recordAction('browser_fill_form', `${filled}/${results.length}`, filled > 0 && filled === results.length);
+  return finish({ filled, fields: results, submitted });
 }
 
 function wait(milliseconds) { return new Promise(resolve => setTimeout(() => resolve({ waited: milliseconds, revision: state.revision }), milliseconds)); }
@@ -946,7 +957,8 @@ async function act(input = {}) {
   if (state.recovered) { result.recovered = true; state.recovered = false; }
   if (refreshed) result.snapshot = refreshed;
   if (digestState) result.digest = digestState;
-  state.pageStore?.recordAction(`browser_${action}`, nextRef ?? input.ref ?? null, changed === true, form?.reason ?? null);
+  if (action === 'fill' || action === 'type' || action === 'select') noteFormFor(element);
+  state.pageStore.recordAction(`browser_${action}`, nextRef ?? target.ref ?? target.selector ?? null, changed === true, form?.reason ?? undefined);
   return result;
 }
 

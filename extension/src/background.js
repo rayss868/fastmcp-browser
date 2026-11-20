@@ -813,7 +813,7 @@ async function visualSnapshot(params) {
 }
 
 async function command(method, params) {
-  const pageMethods = ['browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload', 'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read'];
+  const pageMethods = ['browser_snapshot', 'browser_find', 'browser_inventory', 'browser_click', 'browser_fill', 'browser_type', 'browser_press', 'browser_select', 'browser_fill_form', 'browser_wait', 'browser_scroll', 'browser_pointer_move', 'browser_pointer_click', 'browser_pointer_drag', 'browser_act', 'browser_evaluate', 'browser_upload', 'browser_workspace_info', 'browser_workspace_select', 'browser_workspace_write', 'browser_workspace_read', 'browser_state'];
   if (method === 'browser_wait_for') return waitForPage(Number(params.tabId), params);
   if (method === 'browser_snapshot' && params.frames === true) return snapshotFrames(Number(params.tabId), params);
   if (method === 'browser_snapshot' && params.mode === 'visual') return visualSnapshot(params);

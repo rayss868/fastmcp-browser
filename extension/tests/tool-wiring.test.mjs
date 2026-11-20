@@ -279,3 +279,18 @@ test('drag can scroll ref endpoints into view, and snapshot flags image controls
   assert.ok(/createReferenceStore\(\(\) => location\.href\)/.test(engine), 'the store must be anchored to the page URL');
   assert.ok(refs.includes('navigated: true'), 'a URL-change expiry must be distinguishable from a plain stale ref');
 });
+
+test('browser_state is wired from the router through background, page engine, and build', async () => {
+  const router = await read('../src/router.js');
+  const background = await read('../src/background.js');
+  const engine = await read('../src/content/engine.js');
+  const build = await read('../build.mjs');
+
+  assert.ok(router.includes("'browser_state'"), 'router must allow browser_state');
+  assert.ok(background.includes("'browser_state'"), 'background must route browser_state');
+  assert.ok(background.includes('engine.pageState(input)'), 'background must dispatch browser_state to engine.pageState');
+  assert.ok(engine.includes('createPageStateStore()'), 'engine must initialize page state store');
+  assert.ok(engine.includes('pageState,'), 'engine must expose pageState on window.__fastMcp');
+  assert.ok(engine.includes('captureForm('), 'engine must capture form values into pageStore');
+  assert.ok(build.includes("'content/state.js'"), 'build must bundle content/state.js');
+});
