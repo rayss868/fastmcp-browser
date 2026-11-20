@@ -8,6 +8,33 @@ Build archives (Chromium zip, Firefox zip, Firefox xpi) are attached to each
 [GitHub Release](https://github.com/rayss868/fastmcp-browser/releases). This file
 is the source of truth for what changed in each version.
 
+## [Unreleased]
+
+## [0.9.0] - 2026-11-20
+
+### Added
+
+- **`browser_state` exposes a live page-grounding summary (40th tool).**
+  Returns a compact snapshot of the page-state store that actions keep updated
+  as they run: recent form fills, clicked elements, and the last recorded
+  actions with timestamps. Use it to re-ground after long action sequences
+  without paying for a full `browser_snapshot`.
+  - Accepts an optional `tabId` (routed like other page methods; defaults to
+    the active tab).
+  - Read-only: included in `READ_ONLY_METHODS`, so it is safe inside
+    `browser_run` batches and read-only workflows.
+  - The extension's content engine initializes the page-state store on every
+    page and records `browser_click`, `browser_fill`, `browser_press`,
+    `browser_select`, `browser_fill_form`, and `browser_act` actions, including
+    the form a fill or select targeted.
+
+### Fixed
+
+- **Ref-based reads now resolve inside open shadow roots.** The page evaluator
+  previously looked up bound refs with `document.querySelector` only, which
+  missed refs hosted in shadow DOM and made every ref-based read on such pages
+  fail. The lookup now walks open shadow roots (bounded at 50,000 nodes).
+
 ## [0.8.0] - 2026-11-02
 
 ### Added
@@ -531,7 +558,9 @@ is the source of truth for what changed in each version.
   added.
 - **0.1.0** (2026-09-23) — first release.
 
-[Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/rayss868/fastmcp-browser/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.9.0
+[0.8.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.8.0
 [0.7.1]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.7.1
 [0.7.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.7.0
 [0.6.0]: https://github.com/rayss868/fastmcp-browser/releases/tag/v0.6.0
